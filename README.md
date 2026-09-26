@@ -84,3 +84,55 @@ About 15 minutes of history is kept in memory for live charts.
 | Frontend | Svelte + Vite |
 | Charts | uPlot |
 | Live updates | Server-Sent Events (SSE) |
+
+## Development
+
+Requires Python 3.11 or newer. The backend lives in `backend/`, and its dependencies are declared in `backend/pyproject.toml`.
+
+### Setup
+
+```bash
+python -m venv .venv
+source .venv/bin/activate        # Windows: .\.venv\Scripts\Activate.ps1
+cd backend
+pip install -e ".[dev]"
+cp .env.example .env             # optional; Windows: copy .env.example .env
+```
+
+`-e` installs the project in editable mode, so code changes apply without reinstalling. `[dev]` adds the test dependencies.
+
+### Run
+
+From `backend/`:
+
+```bash
+python -m api.main
+```
+
+The API starts on http://127.0.0.1:8000 with auto-reload, and interactive docs are at http://127.0.0.1:8000/docs.
+
+On first start, vservx creates an admin account and prints its generated password to the console once. To choose the credentials yourself, set `VSERVX_ADMIN_EMAIL` and `VSERVX_ADMIN_PASSWORD` before the first start.
+
+### Test
+
+From `backend/`:
+
+```bash
+pytest
+```
+
+Tests use a temporary data directory and never touch your real database.
+
+### Configuration
+
+Settings come from `VSERVX_*` environment variables or a `.env` file in the directory the app is started from. `backend/.env.example` lists every option with its default.
+
+Local data lives in `~/.config/vservx/` (override with `VSERVX_DATA_DIR`):
+
+| File | Purpose |
+|---|---|
+| `vservx.db` | SQLite database |
+| `secret.key` | Encrypts stored server credentials. Back it up: without it, saved passwords can't be read. |
+| `jwt.key` | Signs login tokens. Deleting it signs everyone out. |
+
+There are no database migrations yet. After a schema change, delete `vservx.db` and restart to recreate it.
