@@ -71,6 +71,17 @@ def create_app() -> FastAPI:
     )
     app.add_exception_handler(IntegrityError, _integrity_error_handler)
     app.include_router(api_router)
+
+    # Placeholder until the built Svelte UI is served at "/".
+    @app.get("/", include_in_schema=False)
+    async def root() -> dict[str, str]:
+        return {
+            "name": "vservx",
+            "version": __version__,
+            "docs": "/docs",
+            "health": "/api/health",
+        }
+
     return app
 
 
