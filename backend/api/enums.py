@@ -12,6 +12,12 @@ class LaunchType(StrEnum):
     BARE = "bare"
 
 
+class UserRole(StrEnum):
+    ADMIN = "admin"
+    OPERATOR = "operator"
+    VIEWER = "viewer"
+
+
 class SnapshotTrigger(StrEnum):
     DISCOVERY = "discovery"
     PRE_STOP = "pre-stop"

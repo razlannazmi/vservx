@@ -10,10 +10,12 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from api.auth.tokens import init_tokens
 from api.config import get_settings
 from api.db.crypto import init_crypto
 from api.db.engine import create_engine, create_schema, create_sessionmaker
 from api.routers import router as api_router
+from api.service.users import seed_admin
 from api.version import __version__
 
 logger = logging.getLogger(__name__)
@@ -38,6 +40,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     key_created = init_crypto(settings.secret_key_path)
+    init_tokens(settings.jwt_key_path)
 
     engine = create_engine(settings.db_path)
     await create_schema(engine)
@@ -45,6 +48,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await _warn_if_secrets_unreadable(engine)
     app.state.engine = engine
     app.state.sessionmaker = create_sessionmaker(engine)
+    async with app.state.sessionmaker() as session:
+        await seed_admin(session, settings)
     # Startup: SSH pool, metrics poller go here.
     try:
         yield

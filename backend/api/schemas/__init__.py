@@ -3,6 +3,7 @@ from api.schemas.health import HealthResponse
 from api.schemas.instance import InstanceBase, InstanceCreate, InstanceRead, InstanceUpdate
 from api.schemas.server import ServerBase, ServerCreate, ServerRead, ServerUpdate
 from api.schemas.snapshot import SnapshotBase, SnapshotCreate, SnapshotDetail, SnapshotRead
+from api.schemas.user import UserBase, UserCreate, UserRead, UserUpdate
 
 __all__ = [
     "ActionHistoryBase",
@@ -21,4 +22,8 @@ __all__ = [
     "SnapshotCreate",
     "SnapshotDetail",
     "SnapshotRead",
+    "UserBase",
+    "UserCreate",
+    "UserRead",
+    "UserUpdate",
 ]

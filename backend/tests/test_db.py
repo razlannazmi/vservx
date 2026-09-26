@@ -5,12 +5,13 @@ from pathlib import Path
 
 import pytest
 from sqlalchemy import select, text
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.db.crypto import init_crypto
 from api.db.engine import create_engine, create_schema, create_sessionmaker
-from api.enums import AuthType, LaunchType, SnapshotTrigger
-from api.models import ActionHistory, Instance, Server, Snapshot
+from api.enums import AuthType, LaunchType, SnapshotTrigger, UserRole
+from api.models import ActionHistory, Instance, Server, Snapshot, User
 
 
 async def _open_session(data_dir: Path) -> AsyncIterator[AsyncSession]:
@@ -87,10 +88,44 @@ def test_enums_stored_as_values(data_dir: Path) -> None:
     run(data_dir, test)
 
 
+def _user(**overrides) -> User:
+    fields = dict(name="Ada", email="ada@example.com", password_hash="$argon2id$...")
+    return User(**(fields | overrides))
+
+
+def test_user_defaults_and_email_normalized(data_dir: Path) -> None:
+    async def test(session: AsyncSession) -> None:
+        session.add(_user(email="  Ada@Example.COM "))
+        await session.commit()
+        session.expunge_all()
+
+        user = (await session.execute(select(User))).scalar_one()
+        assert user.email == "ada@example.com"
+        assert user.role is UserRole.VIEWER
+        assert user.is_active is True
+        assert user.token_version == 0
+        assert user.last_login_at is None
+
+    run(data_dir, test)
+
+
+def test_user_email_unique_ignoring_case(data_dir: Path) -> None:
+    async def test(session: AsyncSession) -> None:
+        session.add(_user())
+        await session.commit()
+
+        session.add(_user(email="ADA@example.com"))
+        with pytest.raises(IntegrityError):
+            await session.commit()
+
+    run(data_dir, test)
+
+
 def test_foreign_key_actions(data_dir: Path) -> None:
     async def test(session: AsyncSession) -> None:
         server = _server()
-        session.add(server)
+        user = _user()
+        session.add_all([server, user])
         await session.flush()
         instance = Instance(server_id=server.id, launch_type=LaunchType.DOCKER, ref="abc123")
         session.add(instance)
@@ -98,7 +133,7 @@ def test_foreign_key_actions(data_dir: Path) -> None:
         session.add_all([
             Snapshot(instance_id=instance.id, server_id=server.id,
                      trigger=SnapshotTrigger.DISCOVERY, launch_type=LaunchType.DOCKER),
-            ActionHistory(server_id=server.id, instance_id=instance.id,
+            ActionHistory(user_id=user.id, server_id=server.id, instance_id=instance.id,
                           action="stop", result="ok"),
         ])
         await session.commit()
@@ -113,6 +148,12 @@ def test_foreign_key_actions(data_dir: Path) -> None:
         assert (await session.execute(text("SELECT count(*) FROM snapshots"))).scalar_one() == 0
         history = (await session.execute(text("SELECT server_id FROM action_history"))).one()
         assert history.server_id is None
+
+        # User removed: the audit log stays, detached from them.
+        await session.execute(text("DELETE FROM users"))
+        await session.commit()
+        history = (await session.execute(text("SELECT user_id FROM action_history"))).one()
+        assert history.user_id is None
 
     run(data_dir, test)
 

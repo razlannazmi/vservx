@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict
 class ActionHistoryBase(BaseModel):
     """An audit log entry. Entries are never edited, so there is no update schema."""
 
+    # None for actions the app takes on its own.
+    user_id: int | None
     server_id: int | None
     instance_id: int | None
     action: str

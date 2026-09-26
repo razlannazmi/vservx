@@ -3,8 +3,8 @@ from datetime import UTC, datetime
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from api.enums import AuthType, LaunchType, SnapshotTrigger
-from api.models import Server, Snapshot
+from api.enums import AuthType, LaunchType, SnapshotTrigger, UserRole
+from api.models import Server, Snapshot, User
 from api.schemas import (
     ActionHistoryBase,
     ActionHistoryCreate,
@@ -21,6 +21,10 @@ from api.schemas import (
     SnapshotCreate,
     SnapshotDetail,
     SnapshotRead,
+    UserBase,
+    UserCreate,
+    UserRead,
+    UserUpdate,
 )
 
 BASE = {"name": "gpu-1", "host": "10.0.0.1", "username": "ubuntu"}
@@ -89,9 +93,12 @@ def test_schemas_extend_base() -> None:
     assert issubclass(SnapshotRead, SnapshotBase)
     assert issubclass(ActionHistoryCreate, ActionHistoryBase)
     assert issubclass(ActionHistoryRead, ActionHistoryBase)
+    assert issubclass(UserCreate, UserBase)
+    assert issubclass(UserUpdate, UserBase)
+    assert issubclass(UserRead, UserBase)
 
 
-@pytest.mark.parametrize("schema", [ServerUpdate, InstanceUpdate])
+@pytest.mark.parametrize("schema", [ServerUpdate, InstanceUpdate, UserUpdate])
 def test_update_schemas_are_fully_optional(schema: type[BaseModel]) -> None:
     # Guards against a required field added to a Base but not overridden in its Update.
     required = [name for name, field in schema.model_fields.items() if field.is_required()]
@@ -99,7 +106,7 @@ def test_update_schemas_are_fully_optional(schema: type[BaseModel]) -> None:
 
 
 @pytest.mark.parametrize(
-    "schema", [ServerRead, InstanceRead, SnapshotRead, SnapshotDetail, ActionHistoryRead]
+    "schema", [ServerRead, InstanceRead, SnapshotRead, SnapshotDetail, ActionHistoryRead, UserRead]
 )
 def test_read_schemas_mark_every_field_required(schema: type[BaseModel]) -> None:
     # Responses always include every field, so generated frontend types shouldn't mark any optional.
@@ -134,7 +141,8 @@ def test_snapshot_create_builds_model() -> None:
 
 
 def test_action_history_create() -> None:
-    entry = ActionHistoryCreate(server_id=1, instance_id=None, action="stop", result="ok")
+    entry = ActionHistoryCreate(user_id=1, server_id=1, instance_id=None,
+                                action="stop", result="ok")
     assert entry.detail is None
 
 
@@ -145,3 +153,46 @@ def test_snapshot_read_omits_raw() -> None:
 
     assert "raw" not in SnapshotRead.model_validate(snapshot).model_dump()
     assert SnapshotDetail.model_validate(snapshot).raw == '{"Id": "abc"}'
+
+
+def test_user_create_normalizes_and_defaults() -> None:
+    user = UserCreate(name="Ada", email="Ada@Example.COM", password="correct-horse")
+    assert user.email == "ada@example.com"
+    assert user.role is UserRole.VIEWER
+    assert user.is_active is True
+    assert "correct-horse" not in repr(user)
+
+
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"email": "not-an-email"},
+        {"password": "short"},
+        {"name": "   "},
+        {"role": "superuser"},
+    ],
+)
+def test_user_create_rejects_invalid(fields: dict) -> None:
+    with pytest.raises(ValidationError):
+        UserCreate(**({"name": "Ada", "email": "ada@example.com", "password": "correct-horse"} | fields))
+
+
+def test_user_update_is_partial() -> None:
+    update = UserUpdate(role="operator")
+    assert update.model_dump(exclude_unset=True) == {"role": UserRole.OPERATOR}
+
+    with pytest.raises(ValidationError):
+        UserUpdate(email=None)
+
+
+def test_user_read_hides_secrets() -> None:
+    now = datetime.now(UTC)
+    user = User(id=1, name="Ada", email="ada@example.com", password_hash="$argon2id$...",
+                role=UserRole.ADMIN, is_active=True, token_version=3, last_login_at=None,
+                created_at=now, updated_at=now)
+
+    data = UserRead.model_validate(user).model_dump()
+
+    assert "password_hash" not in data
+    assert "token_version" not in data
+    assert data["last_login_at"] is None
