@@ -1,4 +1,5 @@
 from api.schemas.action_history import ActionHistoryBase, ActionHistoryCreate, ActionHistoryRead
+from api.schemas.auth import LoginRequest, TokenResponse
 from api.schemas.health import HealthResponse
 from api.schemas.instance import InstanceBase, InstanceCreate, InstanceRead, InstanceUpdate
 from api.schemas.server import ServerBase, ServerCreate, ServerRead, ServerUpdate
@@ -14,6 +15,7 @@ __all__ = [
     "InstanceCreate",
     "InstanceRead",
     "InstanceUpdate",
+    "LoginRequest",
     "ServerBase",
     "ServerCreate",
     "ServerRead",
@@ -22,6 +24,7 @@ __all__ = [
     "SnapshotCreate",
     "SnapshotDetail",
     "SnapshotRead",
+    "TokenResponse",
     "UserBase",
     "UserCreate",
     "UserRead",

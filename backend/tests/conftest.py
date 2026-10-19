@@ -1,11 +1,19 @@
-from collections.abc import Iterator
+import asyncio
+from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.auth.password import hash_password
 from api.config import get_settings
+from api.db.engine import create_engine, create_sessionmaker
+from api.enums import UserRole
 from api.main import create_app
+from api.models import User
+from tests.helpers import ADMIN, USER_PASSWORD, Db, login_headers
 
 
 @pytest.fixture(autouse=True)
@@ -18,6 +26,61 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
 
 
 @pytest.fixture
-def client(data_dir: Path) -> Iterator[TestClient]:
+def client(data_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
+    # Seed the admin with a known password so tests can sign in as them.
+    monkeypatch.setenv("VSERVX_ADMIN_PASSWORD", ADMIN["password"])
+    get_settings.cache_clear()
     with TestClient(create_app()) as client:
         yield client
+
+
+@pytest.fixture
+def db(data_dir: Path) -> Db:
+    """Run fn(session) against the test database, commit, and return its result."""
+
+    def run(fn: Callable[[AsyncSession], Awaitable[Any]]) -> Any:
+        async def main() -> Any:
+            engine = create_engine(data_dir / "vservx.db")
+            try:
+                async with create_sessionmaker(engine)() as session:
+                    result = await fn(session)
+                    await session.commit()
+                    return result
+            finally:
+                await engine.dispose()
+
+        return asyncio.run(main())
+
+    return run
+
+
+@pytest.fixture
+def add_user(client: TestClient, db: Db) -> Callable[..., None]:
+    """Insert a user directly; there is no user API yet."""
+
+    def add(email: str, password: str = USER_PASSWORD, **fields: Any) -> None:
+        fields.setdefault("password_hash", hash_password(password))
+
+        async def insert(session: AsyncSession) -> None:
+            session.add(User(name="Test User", email=email, **fields))
+
+        db(insert)
+
+    return add
+
+
+@pytest.fixture
+def admin_headers(client: TestClient) -> dict[str, str]:
+    return login_headers(client, ADMIN["email"], ADMIN["password"])
+
+
+@pytest.fixture
+def role_headers(client: TestClient, add_user: Callable[..., None]) -> Callable[[UserRole], dict[str, str]]:
+    """Add a user with the given role and return auth headers for them."""
+
+    def headers(role: UserRole) -> dict[str, str]:
+        email = f"{role.value}@example.com"
+        add_user(email, role=role)
+        return login_headers(client, email, USER_PASSWORD)
+
+    return headers

@@ -1,13 +1,16 @@
 import logging
 import secrets
+from functools import cache
 
+from fastapi.concurrency import run_in_threadpool
 from sqlalchemy import exists, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth import revoke_tokens
-from api.auth.password import hash_password
+from api.auth.password import hash_password, needs_rehash, verify_password
 from api.config import Settings
+from api.db.base import utcnow
 from api.enums import UserRole
 from api.models import User
 from api.schemas import UserCreate, UserUpdate
@@ -31,6 +34,27 @@ def apply_user_update(user: User, update: UserUpdate) -> None:
     # Revoke on deactivation too, so reactivating the account doesn't revive old tokens.
     if update.password is not None or fields.get("is_active") is False:
         revoke_tokens(user)
+
+
+@cache
+def _dummy_hash() -> str:
+    return hash_password(secrets.token_urlsafe(16))
+
+
+async def authenticate(session: AsyncSession, email: str, password: str) -> User | None:
+    """Check credentials and record the login. Returns None on any failure, without saying which."""
+    user = await session.scalar(select(User).where(User.email == email))
+    # Verify against a throwaway hash for unknown emails, so a miss takes as long as a wrong password.
+    password_hash = user.password_hash if user is not None else _dummy_hash()
+    valid = await run_in_threadpool(verify_password, password_hash, password)
+    if user is None or not valid or not user.is_active:
+        return None
+
+    if needs_rehash(user.password_hash):
+        user.password_hash = await run_in_threadpool(hash_password, password)
+    user.last_login_at = utcnow()
+    await session.commit()
+    return user
 
 
 async def seed_admin(session: AsyncSession, settings: Settings) -> User | None:

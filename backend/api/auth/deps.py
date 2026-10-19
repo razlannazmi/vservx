@@ -5,6 +5,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from api.auth.tokens import InvalidToken, decode_access_token
 from api.db.deps import SessionDep
+from api.enums import UserRole
 from api.models import User
 
 _bearer = HTTPBearer(auto_error=False)
@@ -38,6 +39,12 @@ async def get_current_user(
 
 
 CurrentUserDep = Annotated[User, Depends(get_current_user)]
+
+
+async def require_admin(user: CurrentUserDep) -> User:
+    if user.role is not UserRole.ADMIN:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin role required")
+    return user
 
 
 def revoke_tokens(user: User) -> None:
