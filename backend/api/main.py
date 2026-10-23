@@ -4,6 +4,8 @@ from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
@@ -25,12 +27,13 @@ async def _warn_if_secrets_unreadable(engine: AsyncEngine) -> None:
     """A new key with secrets already stored means the old key file was lost."""
     async with engine.connect() as conn:
         count = (await conn.execute(text(
-            "SELECT count(*) FROM servers WHERE password IS NOT NULL OR key_passphrase IS NOT NULL"
+            "SELECT (SELECT count(*) FROM servers WHERE password IS NOT NULL)"
+            "     + (SELECT count(*) FROM ssh_keys)"
         ))).scalar_one()
     if count:
         logger.warning(
-            "Generated a new encryption key, but %d server(s) have stored secrets that were "
-            "encrypted with a previous key. Restore the old secret.key or re-enter their credentials.",
+            "Generated a new encryption key, but %d stored credential(s) were encrypted with a "
+            "previous key. Restore the old secret.key or re-enter them.",
             count,
         )
 
@@ -64,6 +67,13 @@ async def _integrity_error_handler(request: Request, exc: Exception) -> JSONResp
     return JSONResponse(status_code=409, content={"detail": str(exc.orig)})
 
 
+async def _validation_error_handler(request: Request, exc: Exception) -> JSONResponse:
+    # FastAPI's default 422 echoes the rejected value as "input", which can be a password or private key.
+    assert isinstance(exc, RequestValidationError)
+    errors = [{k: v for k, v in error.items() if k != "input"} for error in exc.errors()]
+    return JSONResponse(status_code=422, content={"detail": jsonable_encoder(errors)})
+
+
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title="vservx", version=__version__, lifespan=lifespan)
@@ -75,6 +85,7 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
     app.add_exception_handler(IntegrityError, _integrity_error_handler)
+    app.add_exception_handler(RequestValidationError, _validation_error_handler)
     app.include_router(api_router)
 
     # Placeholder until the built Svelte UI is served at "/".

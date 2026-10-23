@@ -1,4 +1,5 @@
 import asyncio
+import socket
 from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ from api.enums import UserRole
 from api.main import create_app
 from api.models import User
 from tests.helpers import ADMIN, USER_PASSWORD, Db, login_headers
+from tests.sshd import BackgroundLoop, FakeSSHD
 
 
 @pytest.fixture(autouse=True)
@@ -72,6 +74,52 @@ def add_user(client: TestClient, db: Db) -> Callable[..., None]:
 @pytest.fixture
 def admin_headers(client: TestClient) -> dict[str, str]:
     return login_headers(client, ADMIN["email"], ADMIN["password"])
+
+
+@pytest.fixture
+def api(client: TestClient, admin_headers: dict[str, str]) -> TestClient:
+    """The test client, signed in as the admin."""
+    client.headers.update(admin_headers)
+    return client
+
+
+@pytest.fixture(scope="session")
+def ssh_loop() -> Iterator[BackgroundLoop]:
+    loop = BackgroundLoop()
+    yield loop
+    loop.stop()
+
+
+@pytest.fixture
+def sshd(ssh_loop: BackgroundLoop) -> Iterator[Callable[..., FakeSSHD]]:
+    """Start in-process SSH servers: sshd(password=..., client_key=..., hostname=...)."""
+    servers: list[FakeSSHD] = []
+
+    def start(**kwargs: Any) -> FakeSSHD:
+        server = FakeSSHD(ssh_loop, **kwargs)
+        servers.append(server)
+        return server
+
+    yield start
+    for server in servers:
+        server.close()
+
+
+@pytest.fixture
+def closed_port() -> int:
+    """A local port nothing listens on."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
+@pytest.fixture
+def silent_port() -> Iterator[int]:
+    """A local port that accepts TCP connections and never says anything."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(8)
+        yield sock.getsockname()[1]
 
 
 @pytest.fixture

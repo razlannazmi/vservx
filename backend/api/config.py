@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     admin_name: str = "Admin"
     admin_email: str = "admin@example.com"
     admin_password: SecretStr | None = None
+    # Seconds allowed per SSH hop to connect and log in.
+    ssh_connect_timeout: float = 10.0
 
     @field_validator("data_dir")
     @classmethod

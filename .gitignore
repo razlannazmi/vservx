@@ -2,7 +2,8 @@ vservx.md
 workspace.md
 
 # Claude
-CLAUDE.md
+/.claude/
+/.ignore
 
 # Python
 __pycache__/

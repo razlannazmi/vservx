@@ -1,12 +1,13 @@
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import String
+from sqlalchemy import ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from api.db.base import Base, str_enum, utcnow
 from api.db.crypto import EncryptedString
 from api.enums import AuthType
+from api.ssh.keys import fingerprint_of
 
 if TYPE_CHECKING:
     from api.models.instance import Instance
@@ -22,9 +23,14 @@ class Server(Base):
     username: Mapped[str] = mapped_column(String(255))
     auth_type: Mapped[AuthType] = mapped_column(str_enum(AuthType))
     password: Mapped[str | None] = mapped_column(EncryptedString)
-    # Stored as entered (may start with "~"); expand with Path.expanduser() when connecting.
-    key_path: Mapped[str | None] = mapped_column(String(1024))
-    key_passphrase: Mapped[str | None] = mapped_column(EncryptedString)
+    # The saved key used for key auth; a key in use can't be deleted.
+    ssh_key_id: Mapped[int | None] = mapped_column(ForeignKey("ssh_keys.id", ondelete="RESTRICT"), index=True)
+    # The server directly in front of this one. Longer chains form from these links.
+    jump_server_id: Mapped[int | None] = mapped_column(ForeignKey("servers.id", ondelete="RESTRICT"), index=True)
+    # Only a doorway to other servers: tested and remembered, never searched for vLLM.
+    jump_only: Mapped[bool] = mapped_column(default=False)
+    # OpenSSH public key line recorded on the first successful login; only this key is accepted after.
+    host_key: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 
@@ -38,5 +44,5 @@ class Server(Base):
         return self.password is not None
 
     @property
-    def has_key_passphrase(self) -> bool:
-        return self.key_passphrase is not None
+    def host_key_fingerprint(self) -> str | None:
+        return fingerprint_of(self.host_key) if self.host_key else None

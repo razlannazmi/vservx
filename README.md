@@ -11,10 +11,13 @@ On bare GPU servers, checking which models are running, on which ports, and how 
 ## Key Components
 
 ### SSH Connection
-- Connect with host, port, username, and a password or key file
-- Import hosts from `~/.ssh/config`
-- Manage multiple servers at once
-- Nothing is installed on the remote server
+- Connect with host, port, username, and a password or a saved key
+- **Saved keys:** upload or paste a private key once, give it a name, and pick it for any number of servers. Replacing it updates every server that uses it.
+- **Jump hosts:** any saved server can be the jump host for another, and chains can be any length (laptop → bastion-1 → bastion-2 → gpu-7). Each hop uses its own credentials.
+- **Connection test:** test a saved server, or its settings before saving. The result shows each hop in order and, if one fails, which one and why.
+- **Host keys remembered:** vservx records each server's host key on the first successful login and refuses to connect if it changes, until an admin accepts the new key.
+- Import from `~/.ssh/config`: upload your SSH config to get pre-filled servers to review; nothing is saved until you confirm.
+- Nothing is installed on the remote server, and nothing on the machine running vservx (its `~/.ssh`, agent or config) is used
 
 ### Discovery
 Finds vLLM instances however they were launched:
@@ -127,12 +130,12 @@ Tests use a temporary data directory and never touch your real database.
 
 Settings come from `VSERVX_*` environment variables or a `.env` file in the directory the app is started from. `backend/.env.example` lists every option with its default.
 
-Local data lives in `~/.config/vservx/` (override with `VSERVX_DATA_DIR`):
+Local data lives in `~/.config/vservx/` (override with `VSERVX_DATA_DIR`). This directory is the one thing to back up, and the one volume to mount when running in Docker:
 
 | File | Purpose |
 |---|---|
 | `vservx.db` | SQLite database |
-| `secret.key` | Encrypts stored server credentials. Back it up: without it, saved passwords can't be read. |
+| `secret.key` | Encrypts stored passwords and saved keys. Back it up: without it, they can't be read. |
 | `jwt.key` | Signs login tokens. Deleting it signs everyone out. |
 
 There are no database migrations yet. After a schema change, delete `vservx.db` and restart to recreate it.
