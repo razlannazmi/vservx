@@ -9,9 +9,6 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 
-import api.models  # noqa: F401  # registers all tables on Base.metadata
-from api.db.base import Base
-
 
 def create_engine(db_path: Path) -> AsyncEngine:
     engine = create_async_engine(f"sqlite+aiosqlite:///{db_path.as_posix()}")
@@ -31,9 +28,3 @@ def create_engine(db_path: Path) -> AsyncEngine:
 
 def create_sessionmaker(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     return async_sessionmaker(engine, expire_on_commit=False)
-
-
-async def create_schema(engine: AsyncEngine) -> None:
-    # Stand-in until Alembic migrations are added.
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)

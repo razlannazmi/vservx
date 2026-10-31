@@ -29,6 +29,15 @@ class UserRole(StrEnum):
     VIEWER = "viewer"
 
 
+class DatabaseState(StrEnum):
+    """How the database's schema compares with this version of vservx."""
+
+    NEW = "new"
+    CURRENT = "current"
+    UPGRADE_REQUIRED = "upgrade_required"
+    NEWER_THAN_APP = "newer_than_app"
+
+
 class SnapshotTrigger(StrEnum):
     DISCOVERY = "discovery"
     PRE_STOP = "pre-stop"

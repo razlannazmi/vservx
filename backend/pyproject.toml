@@ -14,12 +14,16 @@ dependencies = [
     "email-validator>=2.1",
     "sqlalchemy[asyncio]>=2.0",
     "aiosqlite>=0.20",
+    "alembic>=1.13",
     "cryptography>=43",
     "argon2-cffi>=23.1",
     "PyJWT>=2.9",
     # bcrypt is needed to read passphrase-protected OpenSSH-format keys.
     "asyncssh[bcrypt]>=2.17",
 ]
+
+[project.scripts]
+vservx = "api.cli:main"
 
 [project.optional-dependencies]
 dev = [

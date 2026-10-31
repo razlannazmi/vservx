@@ -6,14 +6,16 @@ from api.config import get_settings
 from api.db.deps import SessionDep
 from api.models import User
 from api.schemas import LoginRequest, TokenResponse, UserRead
+from api.service.database import DatabaseGateDep
 from api.service.users import authenticate
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(data: LoginRequest, session: SessionDep) -> TokenResponse:
-    user = await authenticate(session, data.email, data.password.get_secret_value())
+async def login(data: LoginRequest, session: SessionDep, gate: DatabaseGateDep) -> TokenResponse:
+    password = data.password.get_secret_value()
+    user = await authenticate(session, data.email, password, detached=not gate.ready)
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

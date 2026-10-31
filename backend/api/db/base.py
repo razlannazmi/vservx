@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, Enum
+from sqlalchemy import JSON, DateTime, Enum, MetaData
 from sqlalchemy.engine import Dialect
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.types import TypeDecorator
@@ -32,6 +32,14 @@ class UTCDateTime(TypeDecorator[datetime]):
 
 
 class Base(DeclarativeBase):
+    # Named constraints, so a migration can find and change them later (SQLite leaves them unnamed).
+    metadata = MetaData(naming_convention={
+        "ix": "ix_%(column_0_label)s",
+        "uq": "uq_%(table_name)s_%(column_0_name)s",
+        "ck": "ck_%(table_name)s_%(constraint_name)s",
+        "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+        "pk": "pk_%(table_name)s",
+    })
     type_annotation_map = {
         datetime: UTCDateTime,
         dict[str, Any]: JSON,

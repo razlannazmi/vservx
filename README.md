@@ -137,5 +137,29 @@ Local data lives in `~/.config/vservx/` (override with `VSERVX_DATA_DIR`). This 
 | `vservx.db` | SQLite database |
 | `secret.key` | Encrypts stored passwords and saved keys. Back it up: without it, they can't be read. |
 | `jwt.key` | Signs login tokens. Deleting it signs everyone out. |
+| `backups/` | A copy of `vservx.db` made before each database upgrade. Never deleted automatically. |
 
-There are no database migrations yet. After a schema change, delete `vservx.db` and restart to recreate it.
+### Database upgrades
+
+A new version of vservx can change the database's tables. vservx never changes an existing database on its own: when it starts on a database that is older than the code, it waits until someone runs the upgrade. While it waits, `/api/health` reports `"database": "upgrade_required"`, signing in still works, and every other API call returns 503 with `"code": "database_upgrade_required"`.
+
+An admin runs the upgrade in either of two ways:
+
+- **In the UI:** the upgrade notice's button, which calls `POST /api/database/upgrade`. `GET /api/database` lists what the upgrade will change.
+- **From the command line:** `vservx db upgrade`, or `docker exec <container> vservx db upgrade` in Docker. `vservx db status` shows whether an upgrade is waiting.
+
+Both back up the database to `backups/` first, then apply every change in one transaction, so a failed upgrade leaves the database as it was. vservx carries on without a restart, and `GET /api/database` reports when the last upgrade happened and who ran it.
+
+To go back to a backup: stop vservx, replace `vservx.db` with the backup file, delete `vservx.db-wal` and `vservx.db-shm` if they exist, then start the vservx version that matches the backup. A newer vservx's database can't be opened by an older version; vservx reports `"database": "newer_than_app"` instead.
+
+A database created before vservx had migrations can't be upgraded. vservx refuses to start on one: move it aside or delete it, and vservx creates a new one.
+
+### Schema changes
+
+The tables are defined by the models in `backend/api/models/`. After changing a model, generate a migration from `backend/`:
+
+```bash
+alembic revision --autogenerate -m "Add GPU details to instances"
+```
+
+Review the generated file in `api/db/migrations/versions/` and commit it with the model change. The message is shown to users in the upgrade notice, so write it in plain words. Then upgrade your own database with `vservx db upgrade`. `tests/test_database.py` fails if a model change has no migration.

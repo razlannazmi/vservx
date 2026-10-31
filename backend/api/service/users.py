@@ -7,7 +7,7 @@ from sqlalchemy import exists, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.auth import revoke_tokens
+from api.auth import find_user, revoke_tokens
 from api.auth.password import hash_password, needs_rehash, verify_password
 from api.config import Settings
 from api.db.base import utcnow
@@ -41,14 +41,21 @@ def _dummy_hash() -> str:
     return hash_password(secrets.token_urlsafe(16))
 
 
-async def authenticate(session: AsyncSession, email: str, password: str) -> User | None:
-    """Check credentials and record the login. Returns None on any failure, without saying which."""
-    user = await session.scalar(select(User).where(User.email == email))
+async def authenticate(
+    session: AsyncSession, email: str, password: str, *, detached: bool = False
+) -> User | None:
+    """Check credentials and record the login. Returns None on any failure, without saying which.
+
+    Detached (a database upgrade is waiting): only reads, so the login isn't recorded.
+    """
+    user = await find_user(session, User.email == email, detached=detached)
     # Verify against a throwaway hash for unknown emails, so a miss takes as long as a wrong password.
     password_hash = user.password_hash if user is not None else _dummy_hash()
     valid = await run_in_threadpool(verify_password, password_hash, password)
     if user is None or not valid or not user.is_active:
         return None
+    if detached:
+        return user
 
     if needs_rehash(user.password_hash):
         user.password_hash = await run_in_threadpool(hash_password, password)

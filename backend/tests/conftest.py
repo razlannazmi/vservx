@@ -1,5 +1,7 @@
 import asyncio
+import shutil
 import socket
+import textwrap
 from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
 from typing import Any
@@ -10,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth.password import hash_password
 from api.config import get_settings
+from api.db import migrate
 from api.db.engine import create_engine, create_sessionmaker
 from api.enums import UserRole
 from api.main import create_app
@@ -25,6 +28,23 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     get_settings.cache_clear()
     yield tmp_path
     get_settings.cache_clear()
+
+
+@pytest.fixture
+def extra_migration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[str], None]:
+    """Stack a throwaway migration 0002 on the real ones: extra_migration("<upgrade() body>")."""
+
+    def add(body: str) -> None:
+        location = tmp_path / "migrations"
+        shutil.copytree(migrate.SCRIPT_LOCATION, location, ignore=shutil.ignore_patterns("__pycache__"))
+        (location / "versions" / "0002_test.py").write_text(
+            '"""Add a test column"""\n\nimport sqlalchemy as sa\nfrom alembic import op\n\n'
+            'revision = "0002"\ndown_revision = "0001"\n\n\ndef upgrade() -> None:\n'
+            + textwrap.indent(body, "    ") + "\n"
+        )
+        monkeypatch.setattr(migrate, "SCRIPT_LOCATION", str(location))
+
+    return add
 
 
 @pytest.fixture

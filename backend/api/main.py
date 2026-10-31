@@ -15,8 +15,10 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from api.auth.tokens import init_tokens
 from api.config import get_settings
 from api.db.crypto import init_crypto
-from api.db.engine import create_engine, create_schema, create_sessionmaker
+from api.db.engine import create_engine, create_sessionmaker
+from api.enums import DatabaseState
 from api.routers import router as api_router
+from api.service.database import DatabaseGate, DatabaseNotReady
 from api.service.users import seed_admin
 from api.version import __version__
 
@@ -46,14 +48,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     init_tokens(settings.jwt_key_path)
 
     engine = create_engine(settings.db_path)
-    await create_schema(engine)
-    if key_created:
-        await _warn_if_secrets_unreadable(engine)
     app.state.engine = engine
     app.state.sessionmaker = create_sessionmaker(engine)
-    async with app.state.sessionmaker() as session:
-        await seed_admin(session, settings)
-    # Startup: SSH pool, metrics poller go here.
+
+    async def on_database_ready() -> None:
+        # Startup work that uses the database. Held back while an upgrade waits.
+        if key_created:
+            await _warn_if_secrets_unreadable(engine)
+        async with app.state.sessionmaker() as session:
+            await seed_admin(session, settings)
+        # Startup: SSH pool, metrics poller go here.
+
+    app.state.database = DatabaseGate(settings.db_path, on_database_ready)
+    await app.state.database.start()
     try:
         yield
     finally:
@@ -65,6 +72,16 @@ async def _integrity_error_handler(request: Request, exc: Exception) -> JSONResp
     # e.g. "UNIQUE constraint failed: servers.name"
     assert isinstance(exc, IntegrityError)
     return JSONResponse(status_code=409, content={"detail": str(exc.orig)})
+
+
+async def _database_not_ready_handler(request: Request, exc: Exception) -> JSONResponse:
+    # "code" lets the UI tell this apart from other 503s and show the upgrade notice.
+    assert isinstance(exc, DatabaseNotReady)
+    if exc.state is DatabaseState.NEWER_THAN_APP:
+        content = {"detail": "Database is newer than this vservx", "code": "database_newer_than_app"}
+    else:
+        content = {"detail": "Database upgrade required", "code": "database_upgrade_required"}
+    return JSONResponse(status_code=503, content=content)
 
 
 async def _validation_error_handler(request: Request, exc: Exception) -> JSONResponse:
@@ -84,6 +101,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_exception_handler(DatabaseNotReady, _database_not_ready_handler)
     app.add_exception_handler(IntegrityError, _integrity_error_handler)
     app.add_exception_handler(RequestValidationError, _validation_error_handler)
     app.include_router(api_router)
