@@ -14,14 +14,20 @@ class User(Base):
     name: Mapped[str] = mapped_column(String(255))
     email: Mapped[str] = mapped_column(String(255), unique=True)
     password_hash: Mapped[str] = mapped_column(String(255))
-    role: Mapped[UserRole] = mapped_column(str_enum(UserRole), default=UserRole.VIEWER)
+    role: Mapped[UserRole] = mapped_column(str_enum(UserRole), default=UserRole.MEMBER)
     # Deactivate instead of deleting so the account's audit history stays attributed.
     is_active: Mapped[bool] = mapped_column(default=True)
     # Embedded in issued JWTs; bump it to revoke every token issued before (password change, deactivation).
     token_version: Mapped[int] = mapped_column(default=0)
+    # None while a sign-up waits for an app admin; a pending account can't sign in.
+    approved_at: Mapped[datetime | None]
     last_login_at: Mapped[datetime | None]
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+    @property
+    def is_pending(self) -> bool:
+        return self.approved_at is None
 
     # Lowercased here, not just in the schema, so the unique constraint is case-insensitive.
     @validates("email")

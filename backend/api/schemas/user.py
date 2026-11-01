@@ -24,7 +24,7 @@ class UserBase(BaseModel):
 
     name: Text255
     email: Email
-    role: UserRole = UserRole.VIEWER
+    role: UserRole = UserRole.MEMBER
     is_active: bool = True
 
 
