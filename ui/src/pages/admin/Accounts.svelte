@@ -115,9 +115,9 @@
 </script>
 
 <div class="flex-1 overflow-y-auto p-6">
-  <div class="mx-auto max-w-5xl space-y-8">
+  <div class="mx-auto max-w-5xl space-y-6">
     <header class="flex flex-wrap items-end justify-between gap-4">
-      <div class="space-y-1">
+      <div class="space-y-1.5">
         <h1 class="text-xl font-semibold tracking-tight">Accounts</h1>
         <p class="text-sm text-muted-foreground">Everyone who can sign in to vservx.</p>
       </div>
@@ -133,7 +133,7 @@
     </header>
 
     {#if pending.length > 0}
-      <section class="space-y-3" aria-labelledby="accounts-waiting">
+      <section class="space-y-4" aria-labelledby="accounts-waiting">
         <h2 id="accounts-waiting" class="flex items-center gap-2 font-medium">
           <span class="size-2 rounded-full bg-status-warn" aria-hidden="true"></span> Waiting for approval
         </h2>
@@ -155,7 +155,7 @@
       </section>
     {/if}
 
-    <section class="space-y-3" aria-labelledby="accounts-all">
+    <section class="space-y-4" aria-labelledby="accounts-all">
       <h2 id="accounts-all" class="font-medium">All accounts</h2>
       <div class="rounded-xl border bg-card">
         <Table.Root>

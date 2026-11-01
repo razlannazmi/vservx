@@ -158,7 +158,20 @@
 		@apply bg-background text-foreground antialiased;
 		transition: inherit;
 	}
+	/* Headings wrap into even lines; paragraphs don't leave one word alone on the last. */
+	h1,
+	h2,
+	h3 {
+		text-wrap: balance;
+	}
+	p {
+		text-wrap: pretty;
+	}
 }
+
+/* One vertical rhythm on every page, card and dialog:
+   title → its description 6px (space-y-1.5) · label → its field or list 8px (space-y-2) ·
+   header → what it introduces, and field → field 16px (space-y-4) · section → section 24px (space-y-6). */
 
 /* Every animation and transition turns off when the operating system asks for less motion. */
 @media (prefers-reduced-motion: reduce) {

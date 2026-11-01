@@ -54,7 +54,7 @@
 
 <div class="flex-1 overflow-y-auto p-6">
   <div class="mx-auto max-w-5xl space-y-6">
-    <header class="space-y-1">
+    <header class="space-y-1.5">
       <h1 class="text-xl font-semibold tracking-tight">Workspaces</h1>
       <p class="text-sm text-muted-foreground">
         Every workspace in vservx. You see inside only the ones you're a member of.

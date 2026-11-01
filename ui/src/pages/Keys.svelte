@@ -62,7 +62,7 @@
 <div class="flex-1 overflow-y-auto p-6">
   <div class="mx-auto max-w-5xl space-y-6">
     <header class="flex flex-wrap items-end justify-between gap-3">
-      <div class="space-y-1">
+      <div class="space-y-1.5">
         <h1 class="text-xl font-semibold tracking-tight">Keys</h1>
         <p class="text-sm text-muted-foreground">Private keys this workspace's servers sign in with. vservx never shows them.</p>
       </div>

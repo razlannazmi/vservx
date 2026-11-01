@@ -1,16 +1,16 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { toast } from "svelte-sonner";
-  import { api, errorMessage, type MemberRead, type WorkspaceRead } from "$lib/api/client";
+  import { api, errorMessage, type MemberRead } from "$lib/api/client";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import * as Select from "$lib/components/ui/select/index.js";
   import { isOwner } from "$lib/permissions";
-  import { navigate } from "$lib/router.svelte";
-  import { leaveMissingWorkspace, loadWorkspaces } from "$lib/workspaces.svelte";
+  import { followLink, navigate } from "$lib/router.svelte";
+  import { leaveMissingWorkspace, loadWorkspaces, type Workspace } from "$lib/workspaces.svelte";
 
-  let { workspace }: { workspace: WorkspaceRead } = $props();
+  let { workspace }: { workspace: Workspace } = $props();
 
   let name = $state("");
   let renaming = $state(false);
@@ -57,7 +57,7 @@
     if (error) throw new Error(errorMessage(error, "Couldn't hand the workspace over"));
     // Now an operator here, so Settings goes away; the members page shows the new owner.
     await loadWorkspaces();
-    navigate(`/w/${workspace.id}/members`, { replace: true });
+    navigate(`/workspaces/${workspace.slug}/members`, { replace: true });
   }
 
   async function remove() {
@@ -69,12 +69,12 @@
 
 <div class="flex-1 overflow-y-auto p-6">
   <div class="mx-auto max-w-2xl space-y-6">
-    <header class="space-y-1">
+    <header class="space-y-1.5">
       <h1 class="text-xl font-semibold tracking-tight">Settings</h1>
       <p class="text-sm text-muted-foreground">Only the owner can change these.</p>
     </header>
 
-    <section class="space-y-3 rounded-xl border bg-card p-5" aria-labelledby="settings-name">
+    <section class="space-y-4 rounded-xl border bg-card p-5" aria-labelledby="settings-name">
       <h2 id="settings-name" class="font-medium">Name</h2>
       <form class="flex gap-2" onsubmit={rename}>
         <Input aria-label="Workspace name" required maxlength={255} bind:value={name} />
@@ -82,13 +82,18 @@
       </form>
     </section>
 
-    <section class="space-y-3 rounded-xl border bg-card p-5" aria-labelledby="settings-hand-over">
-      <div class="space-y-1">
+    <section class="space-y-4 rounded-xl border bg-card p-5" aria-labelledby="settings-hand-over">
+      <div class="space-y-1.5">
         <h2 id="settings-hand-over" class="font-medium">Hand over</h2>
         <p class="text-sm text-muted-foreground">Make another member the owner. You stay on as an operator.</p>
       </div>
       {#if candidates.length === 0}
-        <p class="text-sm text-muted-foreground">Only a member can become the owner: add someone on the Members page first.</p>
+        <!-- Where the picker would be, boxed like other empty states so it doesn't read as more description. -->
+        <p class="rounded-lg border border-dashed px-3 py-2.5 text-sm text-muted-foreground">
+          Only a member can become the owner: add someone on the
+          <a href={`/workspaces/${workspace.slug}/members`} onclick={followLink} class="text-foreground underline underline-offset-4">Members page</a>
+          first.
+        </p>
       {:else}
         <div class="flex gap-2">
           <Select.Root type="single" bind:value={heir}>
@@ -104,8 +109,8 @@
       {/if}
     </section>
 
-    <section class="space-y-3 rounded-xl border bg-card p-5" aria-labelledby="settings-delete">
-      <div class="space-y-1">
+    <section class="space-y-4 rounded-xl border bg-card p-5" aria-labelledby="settings-delete">
+      <div class="space-y-1.5">
         <h2 id="settings-delete" class="font-medium">Delete workspace</h2>
         <p class="text-sm text-muted-foreground">
           Its servers and saved keys are deleted from vservx and every member loses access. The servers themselves

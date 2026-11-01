@@ -17,7 +17,7 @@ def test_app_files_served(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     with TestClient(create_app()) as client:
         assert "<title>vservx</title>" in client.get("/").text
         # A link into the app works on refresh.
-        assert "<title>vservx</title>" in client.get("/w/1/servers/2").text
+        assert "<title>vservx</title>" in client.get("/workspaces/homelab/servers/2").text
         assert client.get("/assets/app.js").text == "console.log(1)"
         missing = client.get("/api/nope")
         assert missing.status_code == 404 and missing.headers["content-type"].startswith("application/json")

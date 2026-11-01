@@ -1,6 +1,6 @@
 from collections.abc import Iterable
 
-from sqlalchemy import case, delete, func, or_, select, update
+from sqlalchemy import case, delete, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.enums import WorkspaceRole
@@ -9,6 +9,14 @@ from api.schemas import AccountSummary, AdminWorkspaceRead, MemberRead, Workspac
 
 # Most accounts one search returns; the owner narrows the search rather than scrolling.
 SEARCH_LIMIT = 20
+
+
+async def name_taken(session: AsyncSession, name: str, *, besides: int | None = None) -> bool:
+    """Whether a workspace other than `besides` already has this name, ignoring case."""
+    query = exists().where(Workspace.name_key == name.casefold())
+    if besides is not None:
+        query = query.where(Workspace.id != besides)
+    return bool(await session.scalar(select(query)))
 
 
 async def create_workspace(session: AsyncSession, owner: User, name: str) -> Workspace:

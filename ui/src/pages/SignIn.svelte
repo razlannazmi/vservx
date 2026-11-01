@@ -25,7 +25,7 @@
 
 <div class="flex min-h-svh items-center justify-center p-6">
   <form class="w-full max-w-sm space-y-6" onsubmit={submit}>
-    <div class="space-y-1">
+    <div class="space-y-1.5">
       <p class="font-mono text-sm text-muted-foreground">vservx</p>
       <h1 class="text-2xl font-semibold tracking-tight">Sign in</h1>
       {#if note}

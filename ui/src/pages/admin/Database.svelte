@@ -24,7 +24,7 @@
 
 <div class="flex-1 overflow-y-auto p-6">
   <div class="mx-auto max-w-3xl space-y-6">
-    <header class="space-y-1">
+    <header class="space-y-1.5">
       <h1 class="text-xl font-semibold tracking-tight">Database</h1>
       <p class="text-sm text-muted-foreground">Which version of the tables this vservx runs on, and its upgrades.</p>
     </header>

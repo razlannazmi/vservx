@@ -6,8 +6,9 @@
   import { Input } from "$lib/components/ui/input/index.js";
   import { Label } from "$lib/components/ui/label/index.js";
 
-  // Asks before anything that deletes or removes. With `requireText`, the button waits until it's
-  // typed exactly. onConfirm throws with the words to show when it fails, and the dialog stays open.
+  // Asks before anything that deletes or removes, and before signing out. With `requireText`, the
+  // button waits until it's typed exactly. onConfirm throws with the words to show when it fails,
+  // and the dialog stays open.
   let {
     open = $bindable(false),
     title,

@@ -41,9 +41,11 @@ def upgrade() -> None:
     op.create_table('workspaces',
     sa.Column('id', sa.Integer(), nullable=False),
     sa.Column('name', sa.String(length=255), nullable=False),
+    sa.Column('name_key', sa.String(length=255), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
-    sa.PrimaryKeyConstraint('id', name=op.f('pk_workspaces'))
+    sa.PrimaryKeyConstraint('id', name=op.f('pk_workspaces')),
+    sa.UniqueConstraint('name_key', name=op.f('uq_workspaces_name_key'))
     )
     op.create_table('ssh_keys',
     sa.Column('id', sa.Integer(), nullable=False),

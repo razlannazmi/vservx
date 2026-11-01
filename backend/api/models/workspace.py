@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from sqlalchemy import ForeignKey, Index, String, text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, validates
 
 from api.db.base import Base, str_enum, utcnow
 from api.enums import WorkspaceRole
@@ -13,10 +13,17 @@ class Workspace(Base):
     __tablename__ = "workspaces"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    # Not unique: each person sees only their own list.
     name: Mapped[str] = mapped_column(String(255))
+    # The name case-folded: unique, so "Homelab" and "homelab" can't both exist. The web app's
+    # addresses are made from names.
+    name_key: Mapped[str] = mapped_column(String(255), unique=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
+
+    @validates("name")
+    def _fold_name(self, _: str, value: str) -> str:
+        self.name_key = value.casefold()
+        return value
 
 
 class WorkspaceMember(Base):

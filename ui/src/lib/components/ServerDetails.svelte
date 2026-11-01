@@ -2,6 +2,7 @@
   import { toast } from "svelte-sonner";
   import { api, errorMessage, type ConnectionTestResult, type SavedKeyRead, type ServerRead } from "$lib/api/client";
   import ConnectionResult from "$lib/components/ConnectionResult.svelte";
+  import HostKey from "$lib/components/HostKey.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { localDateTime, relativeTime } from "$lib/format";
   import { routeOf } from "$lib/servers";
@@ -74,9 +75,9 @@
   }
 </script>
 
-<article class="space-y-5 rounded-xl border bg-card p-5" aria-labelledby="server-details-name">
+<article class="space-y-4 rounded-xl border bg-card p-5" aria-labelledby="server-details-name">
   <header class="flex flex-wrap items-start justify-between gap-3">
-    <div class="min-w-0">
+    <div class="min-w-0 space-y-1.5">
       <h2 id="server-details-name" class="truncate text-lg font-semibold tracking-tight">{server.name}</h2>
       <p class="font-mono text-sm break-all text-muted-foreground">{server.username}@{server.host}:{server.port}</p>
     </div>
@@ -96,7 +97,7 @@
     <dt class="text-muted-foreground">Host key</dt>
     <dd>
       {#if server.host_key_fingerprint}
-        <span class="font-mono break-all">{server.host_key_type} · {server.host_key_fingerprint}</span>
+        <span class="font-mono">{server.host_key_type}</span> · <HostKey fingerprint={server.host_key_fingerprint} />
         {#if server.host_key_recorded_at}
           <span class="text-muted-foreground" title={localDateTime(server.host_key_recorded_at)}>
             · recorded {relativeTime(server.host_key_recorded_at)}</span>

@@ -22,6 +22,7 @@ from api.service.workspaces import (
     list_members,
     list_workspaces_for,
     member_read,
+    name_taken,
     workspace_read,
 )
 
@@ -41,6 +42,12 @@ async def _member_or_404(session: AsyncSession, access: WorkspaceAccess, user_id
     return member
 
 
+async def _name_free(session: AsyncSession, name: str, besides: int | None = None) -> None:
+    # Names are unique across vservx, so the other workspace may be one the caller can't see.
+    if await name_taken(session, name, besides=besides):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Another workspace already has that name")
+
+
 def _not_the_owner(member: WorkspaceMember) -> None:
     # A workspace always has exactly one owner; ownership moves only through a hand-over.
     if member.role is WorkspaceRole.OWNER:
@@ -56,6 +63,7 @@ async def list_my_workspaces(user: CurrentUserDep, session: SessionDep) -> list[
 @router.post("", response_model=WorkspaceRead, status_code=status.HTTP_201_CREATED)
 async def create_my_workspace(data: WorkspaceCreate, user: CurrentUserDep, session: SessionDep) -> WorkspaceRead:
     """Anyone signed in can create a workspace, and becomes its owner."""
+    await _name_free(session, data.name)
     workspace = await create_workspace(session, user, data.name)
     return await workspace_read(session, workspace, WorkspaceRole.OWNER)
 
@@ -67,6 +75,8 @@ async def get_workspace(access: WorkspaceAccessDep, session: SessionDep) -> Work
 
 @router.patch("/{workspace_id}", response_model=WorkspaceRead, dependencies=_owner_only)
 async def rename_workspace(data: WorkspaceUpdate, access: WorkspaceAccessDep, session: SessionDep) -> WorkspaceRead:
+    # Changing only the case of its own name is fine.
+    await _name_free(session, data.name, besides=access.workspace.id)
     access.workspace.name = data.name
     await session.commit()
     return await workspace_read(session, access.workspace, access.role)

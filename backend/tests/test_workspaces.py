@@ -32,6 +32,17 @@ def test_workspace_list_shows_only_mine(
     assert (mine["name"], mine["role"], mine["member_count"]) == ("Work", "owner", 1)
 
 
+def test_workspace_names_are_unique(
+    client: TestClient, api: TestClient, w: str, outsider_headers: dict[str, str]
+) -> None:
+    # Across vservx and ignoring case: the outsider can't see "Work" but can't take its name either.
+    assert client.post("/api/workspaces", json={"name": "work"}, headers=outsider_headers).status_code == 409
+    home = api.post("/api/workspaces", json={"name": "Home"}).json()["id"]
+    assert api.patch(f"/api/workspaces/{home}", json={"name": "WORK"}).status_code == 409
+    # Changing only the case of its own name is fine.
+    assert api.patch(w, json={"name": "WORK"}).json()["name"] == "WORK"
+
+
 def test_non_members_get_404(
     client: TestClient, api: TestClient, w: str, outsider_headers: dict[str, str], closed_port: int
 ) -> None:

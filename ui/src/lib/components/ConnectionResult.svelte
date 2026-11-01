@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { ConnectionTestResult, LastTestRead } from "$lib/api/client";
+  import HostKey from "$lib/components/HostKey.svelte";
   import { relativeTime } from "$lib/format";
   import { failureTone, failureWords, TONE_DOT } from "$lib/servers";
 
@@ -51,7 +52,7 @@
               <p class="text-muted-foreground">{hop.message}</p>
             {/if}
             {#if hop.fingerprint}
-              <p class="font-mono text-xs break-all text-muted-foreground">{hop.fingerprint}</p>
+              <p class="text-xs text-muted-foreground"><HostKey fingerprint={hop.fingerprint} /></p>
             {/if}
           </div>
         </li>

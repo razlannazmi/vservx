@@ -1,17 +1,25 @@
 <script lang="ts">
+  import CheckIcon from "@lucide/svelte/icons/check";
+  import ChevronDownIcon from "@lucide/svelte/icons/chevron-down";
   import PlusIcon from "@lucide/svelte/icons/plus";
   import { onMount } from "svelte";
+  import { slide } from "svelte/transition";
   import { toast } from "svelte-sonner";
   import { api, errorMessage, type MemberRead, type WorkspaceRead } from "$lib/api/client";
   import AddMemberDialog from "$lib/components/AddMemberDialog.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import * as Select from "$lib/components/ui/select/index.js";
-  import { isOwner, ROLE_HELP, ROLE_NAMES } from "$lib/permissions";
+  import * as Table from "$lib/components/ui/table/index.js";
+  import { duration } from "$lib/motion";
+  import { isOwner, ROLE_COVERAGE, ROLE_NAMES } from "$lib/permissions";
   import { session } from "$lib/session.svelte";
   import { leaveMissingWorkspace } from "$lib/workspaces.svelte";
 
   let { workspace }: { workspace: WorkspaceRead } = $props();
+
+  // Least to most, left to right.
+  const ROLES = ["viewer", "operator", "owner"] as const;
 
   let members = $state<MemberRead[]>([]);
   let loaded = $state(false);
@@ -19,6 +27,8 @@
   let removing = $state<MemberRead | null>(null);
   let confirmRemove = $state(false);
   let confirmLeave = $state(false);
+  // The roles table is reference: closed until asked for.
+  let showRoles = $state(false);
 
   const owner = $derived(isOwner(workspace.role));
   const me = $derived(session.user?.id ?? null);
@@ -77,7 +87,7 @@
 <div class="flex-1 overflow-y-auto p-6">
   <div class="mx-auto max-w-3xl space-y-6">
     <header class="flex flex-wrap items-end justify-between gap-3">
-      <div class="space-y-1">
+      <div class="space-y-1.5">
         <h1 class="text-xl font-semibold tracking-tight">Members</h1>
         <p class="text-sm text-muted-foreground">Who can see {workspace.name}, and what each of them can do.</p>
       </div>
@@ -114,12 +124,47 @@
         {/each}
       </ul>
 
-      <dl class="grid gap-x-4 gap-y-1 text-sm sm:grid-cols-[6rem_1fr]">
-        {#each ["viewer", "operator", "owner"] as const as role (role)}
-          <dt class="font-medium">{ROLE_NAMES[role]}</dt>
-          <dd class="text-muted-foreground">{ROLE_HELP[role]}</dd>
-        {/each}
-      </dl>
+      <section class="rounded-xl border bg-card" aria-labelledby="members-roles">
+        <h2 id="members-roles">
+          <button type="button" aria-expanded={showRoles} aria-controls="members-roles-table"
+                  onclick={() => (showRoles = !showRoles)}
+                  class={`flex w-full items-center justify-between gap-2 px-4 py-3 text-left font-medium outline-none
+                    hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring ${showRoles ? "rounded-t-xl" : "rounded-xl"}`}>
+            What each role can do
+            <ChevronDownIcon class={`size-4 text-muted-foreground transition-transform duration-200 ${showRoles ? "rotate-180" : ""}`} />
+          </button>
+        </h2>
+        {#if showRoles}
+          <div id="members-roles-table" class="border-t" transition:slide={{ duration: duration(200) }}>
+            <Table.Root>
+              <Table.Header>
+                <Table.Row>
+                  <Table.Head class="pl-4"><span class="sr-only">Action</span></Table.Head>
+                  {#each ROLES as role (role)}
+                    <Table.Head class="w-24 text-center last:pr-4">{ROLE_NAMES[role]}</Table.Head>
+                  {/each}
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
+                {#each ROLE_COVERAGE as row (row.label)}
+                  <Table.Row>
+                    <Table.Cell class="pl-4">{row.label}</Table.Cell>
+                    {#each ROLES as role (role)}
+                      <Table.Cell class="text-center last:pr-4">
+                        {#if row.roles.includes(role)}
+                          <CheckIcon class="mx-auto size-4" /><span class="sr-only">Yes</span>
+                        {:else}
+                          <span class="text-muted-foreground" aria-hidden="true">–</span><span class="sr-only">No</span>
+                        {/if}
+                      </Table.Cell>
+                    {/each}
+                  </Table.Row>
+                {/each}
+              </Table.Body>
+            </Table.Root>
+          </div>
+        {/if}
+      </section>
     {/if}
   </div>
 </div>

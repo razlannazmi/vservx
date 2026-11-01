@@ -30,7 +30,7 @@
 
 <div class="flex min-h-svh items-center justify-center p-6">
   <div class="w-full max-w-sm space-y-6">
-    <div class="space-y-1">
+    <div class="space-y-1.5">
       <p class="font-mono text-sm text-muted-foreground">vservx</p>
       <h1 class="text-2xl font-semibold tracking-tight">Create an account</h1>
     </div>

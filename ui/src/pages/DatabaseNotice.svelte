@@ -37,22 +37,26 @@
   <SignIn note="vservx was updated and its database needs an upgrade. An admin can sign in to run it." />
 {:else}
   <div class="flex min-h-svh items-center justify-center p-6">
-    <section class="w-full max-w-lg space-y-5">
+    <section class="w-full max-w-lg space-y-6">
       <p class="font-mono text-sm text-muted-foreground">vservx</p>
 
       {#if session.database === "newer_than_app"}
-        <h1 class="text-2xl font-semibold tracking-tight">This database comes from a newer vservx</h1>
-        <p class="text-sm text-muted-foreground">
-          A newer version of vservx has already upgraded this database, so this version can't use it.
-          Run that newer version again, or restore a backup from before the upgrade (backups are kept
-          in the <span class="font-mono">backups</span> folder next to the database).
-        </p>
+        <div class="space-y-1.5">
+          <h1 class="text-2xl font-semibold tracking-tight">This database comes from a newer vservx</h1>
+          <p class="text-sm text-muted-foreground">
+            A newer version of vservx has already upgraded this database, so this version can't use it.
+            Run that newer version again, or restore a backup from before the upgrade (backups are kept
+            in the <span class="font-mono">backups</span> folder next to the database).
+          </p>
+        </div>
       {:else if isAdmin}
-        <h1 class="text-2xl font-semibold tracking-tight">The database needs an upgrade</h1>
-        <p class="text-sm text-muted-foreground">
-          This version of vservx changes the database before it can be used. Nobody else can sign in
-          until it's done.
-        </p>
+        <div class="space-y-1.5">
+          <h1 class="text-2xl font-semibold tracking-tight">The database needs an upgrade</h1>
+          <p class="text-sm text-muted-foreground">
+            This version of vservx changes the database before it can be used. Nobody else can sign in
+            until it's done.
+          </p>
+        </div>
         {#if info && info.pending.length > 0}
           <div class="space-y-2">
             <h2 class="text-sm font-medium">What will change</h2>
@@ -69,10 +73,12 @@
         {/if}
         <Button onclick={upgrade} disabled={busy}>{busy ? "Upgrading…" : "Upgrade now"}</Button>
       {:else}
-        <h1 class="text-2xl font-semibold tracking-tight">An admin needs to upgrade the database.</h1>
-        <p class="text-sm text-muted-foreground">
-          vservx was updated. Once an admin has upgraded the database, reload this page.
-        </p>
+        <div class="space-y-1.5">
+          <h1 class="text-2xl font-semibold tracking-tight">An admin needs to upgrade the database.</h1>
+          <p class="text-sm text-muted-foreground">
+            vservx was updated. Once an admin has upgraded the database, reload this page.
+          </p>
+        </div>
       {/if}
 
       {#if session.user}

@@ -20,7 +20,7 @@
       const workspace = await createWorkspace(name.trim());
       open = false;
       name = "";
-      navigate(`/w/${workspace.id}`);
+      navigate(`/workspaces/${workspace.slug}`);
     } catch (error) {
       message = (error as Error).message;
     } finally {
@@ -38,7 +38,7 @@
       </Dialog.Header>
       <div class="space-y-2">
         <Label for="new-workspace-name">Name</Label>
-        <Input id="new-workspace-name" required maxlength={255} placeholder="Home, Work, Cluster 1" bind:value={name} />
+        <Input id="new-workspace-name" required maxlength={255} placeholder="l40s-node, lab, compute-farm" bind:value={name} />
       </div>
       {#if message}
         <p role="alert" class="rounded-lg border px-3 py-2 text-sm">{message}</p>

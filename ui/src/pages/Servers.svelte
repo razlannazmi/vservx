@@ -2,18 +2,17 @@
   import PlusIcon from "@lucide/svelte/icons/plus";
   import { onMount } from "svelte";
   import { fly } from "svelte/transition";
-  import { api, type SavedKeyRead, type ServerRead, type WorkspaceRead } from "$lib/api/client";
+  import { api, type SavedKeyRead, type ServerRead } from "$lib/api/client";
   import ServerCard from "$lib/components/ServerCard.svelte";
   import ServerDetails from "$lib/components/ServerDetails.svelte";
   import ServerDialog from "$lib/components/ServerDialog.svelte";
-  import { Badge } from "$lib/components/ui/badge/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
   import { duration } from "$lib/motion";
   import { canOperate } from "$lib/permissions";
   import { navigate } from "$lib/router.svelte";
-  import { leaveMissingWorkspace } from "$lib/workspaces.svelte";
+  import { leaveMissingWorkspace, type Workspace } from "$lib/workspaces.svelte";
 
-  let { workspace, serverId }: { workspace: WorkspaceRead; serverId: number | null } = $props();
+  let { workspace, serverId }: { workspace: Workspace; serverId: number | null } = $props();
 
   let servers = $state<ServerRead[]>([]);
   let keys = $state<SavedKeyRead[]>([]);
@@ -25,7 +24,7 @@
   const regular = $derived(servers.filter((each) => !each.jump_only));
   const jumpHosts = $derived(servers.filter((each) => each.jump_only));
   const selected = $derived(servers.find((each) => each.id === serverId) ?? null);
-  const base = $derived(`/w/${workspace.id}`);
+  const base = $derived(`/workspaces/${workspace.slug}`);
 
   onMount(() => {
     void load();
@@ -88,9 +87,6 @@
       {#if operator}
         <Button size="sm" class="w-full" onclick={add}><PlusIcon /> Add server</Button>
       {/if}
-      <Button size="sm" variant="outline" class="h-auto w-full flex-wrap justify-start gap-1.5 py-1.5" disabled>
-        Import from SSH config <Badge variant="secondary">Coming soon</Badge>
-      </Button>
     </div>
     {#if regular.length > 0}
       {@render cards(regular)}
