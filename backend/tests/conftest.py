@@ -7,16 +7,19 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth.password import hash_password
 from api.config import get_settings
 from api.db import migrate
+from api.db.base import utcnow
 from api.db.engine import create_engine, create_sessionmaker
-from api.enums import UserRole
+from api.enums import WorkspaceRole
 from api.main import create_app
-from api.models import User
+from api.models import User, WorkspaceMember
 from tests.helpers import ADMIN, USER_PASSWORD, Db, login_headers
 from tests.sshd import BackgroundLoop, FakeSSHD
 
@@ -32,14 +35,15 @@ def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
 
 @pytest.fixture
 def extra_migration(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[str], None]:
-    """Stack a throwaway migration 0002 on the real ones: extra_migration("<upgrade() body>")."""
+    """Stack a throwaway migration 9000 on the real ones: extra_migration("<upgrade() body>")."""
 
     def add(body: str) -> None:
         location = tmp_path / "migrations"
+        head = ScriptDirectory(migrate.SCRIPT_LOCATION).get_current_head()
         shutil.copytree(migrate.SCRIPT_LOCATION, location, ignore=shutil.ignore_patterns("__pycache__"))
-        (location / "versions" / "0002_test.py").write_text(
+        (location / "versions" / "9000_test.py").write_text(
             '"""Add a test column"""\n\nimport sqlalchemy as sa\nfrom alembic import op\n\n'
-            'revision = "0002"\ndown_revision = "0001"\n\n\ndef upgrade() -> None:\n'
+            f'revision = "9000"\ndown_revision = "{head}"\n\n\ndef upgrade() -> None:\n'
             + textwrap.indent(body, "    ") + "\n"
         )
         monkeypatch.setattr(migrate, "SCRIPT_LOCATION", str(location))
@@ -82,6 +86,7 @@ def add_user(client: TestClient, db: Db) -> Callable[..., None]:
 
     def add(email: str, password: str = USER_PASSWORD, **fields: Any) -> None:
         fields.setdefault("password_hash", hash_password(password))
+        fields.setdefault("approved_at", utcnow())
 
         async def insert(session: AsyncSession) -> None:
             session.add(User(name="Test User", email=email, **fields))
@@ -143,12 +148,41 @@ def silent_port() -> Iterator[int]:
 
 
 @pytest.fixture
-def role_headers(client: TestClient, add_user: Callable[..., None]) -> Callable[[UserRole], dict[str, str]]:
-    """Add a user with the given role and return auth headers for them."""
+def workspace(api: TestClient) -> int:
+    """A workspace called "Work", owned by the admin."""
+    response = api.post("/api/workspaces", json={"name": "Work"})
+    assert response.status_code == 201, response.text
+    return response.json()["id"]
 
-    def headers(role: UserRole) -> dict[str, str]:
+
+@pytest.fixture
+def w(workspace: int) -> str:
+    """The workspace's API path, for routes inside it."""
+    return f"/api/workspaces/{workspace}"
+
+
+@pytest.fixture
+def member_headers(
+    client: TestClient, db: Db, workspace: int, add_user: Callable[..., None]
+) -> Callable[[WorkspaceRole], dict[str, str]]:
+    """Add <role>@example.com to the workspace with that role and return auth headers for them."""
+
+    def headers(role: WorkspaceRole) -> dict[str, str]:
         email = f"{role.value}@example.com"
-        add_user(email, role=role)
+        add_user(email)
+
+        async def join(session: AsyncSession) -> None:
+            user_id = await session.scalar(select(User.id).where(User.email == email))
+            session.add(WorkspaceMember(workspace_id=workspace, user_id=user_id, role=role))
+
+        db(join)
         return login_headers(client, email, USER_PASSWORD)
 
     return headers
+
+
+@pytest.fixture
+def outsider_headers(client: TestClient, add_user: Callable[..., None]) -> dict[str, str]:
+    """An account that belongs to no workspace."""
+    add_user("outsider@example.com")
+    return login_headers(client, "outsider@example.com", USER_PASSWORD)

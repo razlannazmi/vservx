@@ -10,7 +10,7 @@ from pydantic import (
     model_validator,
 )
 
-from api.enums import AuthType
+from api.enums import AuthType, ConnectionFailure
 
 Text255 = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=255)]
 Port = Annotated[int, Field(ge=1, le=65535)]
@@ -74,6 +74,20 @@ class ServerUpdate(ServerBase):
         return self
 
 
+class LastTestRead(BaseModel):
+    """The latest connection test of a saved server."""
+
+    at: datetime
+    ok: bool
+    elapsed_ms: int
+    # What the server called itself; only on success.
+    hostname: str | None
+    # Only on failure: why, at which hop of the chain (by name), and that hop's message.
+    failure: ConnectionFailure | None
+    failed_hop: str | None
+    message: str | None
+
+
 class ServerRead(ServerBase):
     # Defaults inherited from Base would otherwise mark fields optional in the OpenAPI response schema.
     model_config = ConfigDict(from_attributes=True, json_schema_serialization_defaults_required=True)
@@ -83,5 +97,10 @@ class ServerRead(ServerBase):
     has_password: bool
     # None until the first successful login records the server's host key.
     host_key_fingerprint: str | None
+    host_key_type: str | None
+    # None also for keys recorded before vservx kept the date.
+    host_key_recorded_at: datetime | None
+    # None until the saved server is first tested.
+    last_test: LastTestRead | None
     created_at: datetime
     updated_at: datetime

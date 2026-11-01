@@ -20,8 +20,8 @@ def _reveal(fields: dict[str, Any]) -> dict[str, Any]:
             for name, value in fields.items()}
 
 
-def server_from_create(data: ServerCreate) -> Server:
-    return Server(**_reveal(data.model_dump()))
+def server_from_create(data: ServerCreate, workspace_id: int) -> Server:
+    return Server(**_reveal(data.model_dump()), workspace_id=workspace_id)
 
 
 def apply_server_update(server: Server, update: ServerUpdate) -> None:
@@ -36,6 +36,7 @@ def apply_server_update(server: Server, update: ServerUpdate) -> None:
     # A new address is a new identity to learn.
     if (server.host, server.port) != address:
         server.host_key = None
+        server.host_key_recorded_at = None
 
 
 async def _jump_hosts_in_front(session: AsyncSession, server: Server) -> int:
@@ -49,7 +50,8 @@ async def _jump_hosts_in_front(session: AsyncSession, server: Server) -> int:
         if count > MAX_JUMP_HOSTS:
             raise ValueError(f"A server can have at most {MAX_JUMP_HOSTS} jump hosts in front of it")
         jump = await session.get(Server, jump_id)
-        if jump is None:
+        # Another workspace's server is as good as missing.
+        if jump is None or jump.workspace_id != server.workspace_id:
             raise ValueError(f"Jump server {jump_id} does not exist")
         jump_id = jump.jump_server_id
     return count
@@ -74,8 +76,11 @@ async def check_links(session: AsyncSession, server: Server) -> None:
     flush as a foreign-key error.
     """
     with session.no_autoflush:
-        if server.ssh_key_id is not None and await session.get(SavedKey, server.ssh_key_id) is None:
-            raise ValueError(f"Saved key {server.ssh_key_id} does not exist")
+        if server.ssh_key_id is not None:
+            key = await session.get(SavedKey, server.ssh_key_id)
+            # Another workspace's key is as good as missing.
+            if key is None or key.workspace_id != server.workspace_id:
+                raise ValueError(f"Saved key {server.ssh_key_id} does not exist")
         in_front = await _jump_hosts_in_front(session, server)
         # Servers behind this one inherit its chain, so they must stay within the limit too.
         if server.id is not None and in_front + await _levels_behind(session, server.id) > MAX_JUMP_HOSTS:

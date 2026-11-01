@@ -23,8 +23,8 @@ def _set_key(key: SavedKey, private_key: str, passphrase: str | None) -> None:
     key.public_key = info.public_key
 
 
-def saved_key_from_create(data: SavedKeyCreate) -> SavedKey:
-    key = SavedKey(name=data.name)
+def saved_key_from_create(data: SavedKeyCreate, workspace_id: int) -> SavedKey:
+    key = SavedKey(name=data.name, workspace_id=workspace_id)
     _set_key(key, data.private_key.get_secret_value(), _reveal(data.passphrase))
     return key
 
@@ -57,10 +57,14 @@ async def saved_key_read(session: AsyncSession, key: SavedKey) -> SavedKeyRead:
     return _read(key, await count_servers_using(session, key.id))
 
 
-async def list_saved_keys(session: AsyncSession) -> list[SavedKeyRead]:
-    keys = (await session.scalars(select(SavedKey).order_by(SavedKey.name))).all()
+async def list_saved_keys(session: AsyncSession, workspace_id: int) -> list[SavedKeyRead]:
+    keys = (await session.scalars(
+        select(SavedKey).where(SavedKey.workspace_id == workspace_id).order_by(SavedKey.name)
+    )).all()
     rows = await session.execute(
-        select(Server.ssh_key_id, func.count()).where(Server.ssh_key_id.is_not(None)).group_by(Server.ssh_key_id)
+        select(Server.ssh_key_id, func.count())
+        .where(Server.workspace_id == workspace_id, Server.ssh_key_id.is_not(None))
+        .group_by(Server.ssh_key_id)
     )
     counts = {key_id: count for key_id, count in rows}
     return [_read(key, counts.get(key.id, 0)) for key in keys]

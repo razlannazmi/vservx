@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import String, Text
+from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from api.db.base import Base, utcnow
@@ -11,9 +11,11 @@ class SavedKey(Base):
     """A private key saved once and picked for any number of servers."""
 
     __tablename__ = "ssh_keys"
+    __table_args__ = (UniqueConstraint("workspace_id", "name"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    name: Mapped[str] = mapped_column(String(255), unique=True)
+    workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id", ondelete="RESTRICT"), index=True)
+    name: Mapped[str] = mapped_column(String(255))
     # Stored as uploaded. Reads as None if it can't be decrypted (the key file changed).
     private_key: Mapped[str | None] = mapped_column(EncryptedString, nullable=False)
     # Stored only when the key is encrypted.

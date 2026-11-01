@@ -7,11 +7,24 @@ from api.schemas.saved_key import SavedKeyBase, SavedKeyCreate, SavedKeyRead, Sa
 from api.schemas.server import ServerBase, ServerCreate, ServerRead, ServerUpdate
 from api.schemas.snapshot import SnapshotBase, SnapshotCreate, SnapshotDetail, SnapshotRead
 from api.schemas.user import UserBase, UserCreate, UserRead, UserUpdate
+from api.schemas.workspace import (
+    AccountSummary,
+    AdminWorkspaceRead,
+    MemberAdd,
+    MemberRead,
+    MemberUpdate,
+    OwnerChange,
+    WorkspaceCreate,
+    WorkspaceRead,
+    WorkspaceUpdate,
+)
 
 __all__ = [
+    "AccountSummary",
     "ActionHistoryBase",
     "ActionHistoryCreate",
     "ActionHistoryRead",
+    "AdminWorkspaceRead",
     "BackupRead",
     "DatabaseRead",
     "HealthResponse",
@@ -21,6 +34,10 @@ __all__ = [
     "InstanceUpdate",
     "LastUpgradeRead",
     "LoginRequest",
+    "MemberAdd",
+    "MemberRead",
+    "MemberUpdate",
+    "OwnerChange",
     "SavedKeyBase",
     "SavedKeyCreate",
     "SavedKeyRead",
@@ -38,4 +55,7 @@ __all__ = [
     "UserCreate",
     "UserRead",
     "UserUpdate",
+    "WorkspaceCreate",
+    "WorkspaceRead",
+    "WorkspaceUpdate",
 ]

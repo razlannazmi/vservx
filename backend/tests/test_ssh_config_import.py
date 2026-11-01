@@ -38,9 +38,9 @@ def test_multi_hop_proxy_jump() -> None:
     assert target.proxy_jump == ["a", "b"]
 
 
-def test_import_preview_saves_nothing(api: TestClient) -> None:
-    response = api.post("/api/servers/import-ssh-config", json={"config": CONFIG})
+def test_import_preview_saves_nothing(api: TestClient, w: str) -> None:
+    response = api.post(f"{w}/servers/import-ssh-config", json={"config": CONFIG})
 
     assert response.status_code == 200
     assert [h["name"] for h in response.json()["hosts"]] == ["bastion", "gpu-7", "gpu-8"]
-    assert api.get("/api/servers").json() == []
+    assert api.get(f"{w}/servers").json() == []

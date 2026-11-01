@@ -24,9 +24,22 @@ class LaunchType(StrEnum):
 
 
 class UserRole(StrEnum):
+    """App-wide role. What someone may do inside a workspace is their WorkspaceRole there."""
+
     ADMIN = "admin"
-    OPERATOR = "operator"
+    MEMBER = "member"
+
+
+class WorkspaceRole(StrEnum):
+    """A member's role inside one workspace, lowest first."""
+
     VIEWER = "viewer"
+    OPERATOR = "operator"
+    OWNER = "owner"
+
+    def at_least(self, other: "WorkspaceRole") -> bool:
+        order = list(WorkspaceRole)
+        return order.index(self) >= order.index(other)
 
 
 class DatabaseState(StrEnum):

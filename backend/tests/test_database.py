@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
+from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +18,9 @@ from api.enums import DatabaseState, LaunchType, SnapshotTrigger
 from api.main import create_app
 from api.models import Instance, Server, Snapshot, User
 from tests.helpers import ADMIN, Db, login_headers
+
+# The newest real migration, read before any test stacks a throwaway one on top.
+HEAD = ScriptDirectory(migrate.SCRIPT_LOCATION).get_current_head()
 
 
 def _sql(db_path: Path, statement: str, *params: object) -> list[tuple]:
@@ -35,6 +39,9 @@ def test_migrations_match_models(data_dir: Path) -> None:
         diff = compare_metadata(MigrationContext.configure(conn), Base.metadata)
     assert diff == []
     assert migrate.inspect_database(db_path).state is DatabaseState.CURRENT
+    # A new database gets no workspace, and sign-up starts open.
+    assert _sql(db_path, "SELECT count(*) FROM workspaces") == [(0,)]
+    assert _sql(db_path, "SELECT id, signup_open FROM app_settings") == [(1, 1)]
 
 
 def test_failed_upgrade_leaves_database_unchanged(
@@ -52,7 +59,7 @@ def test_failed_upgrade_leaves_database_unchanged(
 
     status = migrate.inspect_database(db_path)
     assert status.state is DatabaseState.UPGRADE_REQUIRED
-    assert status.current_revision == "0001"
+    assert status.current_revision == HEAD
     assert status.last_upgrade is None
     # The table rebuild before the failure was rolled back too.
     assert "note" not in _columns(db_path, "servers")
@@ -101,10 +108,10 @@ async def _count_instances_and_snapshots(session: AsyncSession) -> tuple[int, in
 
 
 def test_upgrade_waits_then_keeps_data(
-    api: TestClient, db: Db, data_dir: Path, extra_migration: Callable[[str], None]
+    api: TestClient, w: str, db: Db, data_dir: Path, extra_migration: Callable[[str], None]
 ) -> None:
-    bastion = api.post("/api/servers", json=_server("bastion")).json()["id"]
-    api.post("/api/servers", json=_server("gpu-7", jump_server_id=bastion))
+    bastion = api.post(f"{w}/servers", json=_server("bastion")).json()["id"]
+    api.post(f"{w}/servers", json=_server("gpu-7", jump_server_id=bastion))
     db(_add_instance_and_snapshot)
     # Rebuilding servers is the case that would cascade-delete instances and snapshots.
     extra_migration(
@@ -119,7 +126,7 @@ def test_upgrade_waits_then_keeps_data(
         # Signing in while an upgrade waits only reads the database.
         assert db(_admin_last_login) == signed_in_at
         assert fresh.get("/api/health").json()["database"] == "upgrade_required"
-        blocked = fresh.get("/api/servers", headers=headers)
+        blocked = fresh.get(f"{w}/servers", headers=headers)
         assert blocked.status_code == 503
         assert blocked.json()["code"] == "database_upgrade_required"
         assert fresh.get("/api/database", headers=headers).json()["pending"] == ["Add a test column"]
@@ -129,10 +136,10 @@ def test_upgrade_waits_then_keeps_data(
         done = response.json()
         assert done["state"] == "current"
         assert done["last_upgrade"]["by"] == "Admin"
-        assert done["last_upgrade"]["from_revision"] == "0001"
+        assert done["last_upgrade"]["from_revision"] == HEAD
         assert done["last_upgrade"]["upgraded_at"]
 
-        servers = fresh.get("/api/servers", headers=headers).json()
+        servers = fresh.get(f"{w}/servers", headers=headers).json()
         assert {s["name"]: s["jump_server_id"] for s in servers} == {"bastion": None, "gpu-7": bastion}
         assert db(_count_instances_and_snapshots) == (1, 1)
         backup = migrate.newest_backup(data_dir / "vservx.db")
@@ -145,6 +152,6 @@ def test_command_line_upgrade_unblocks_running_server(
 ) -> None:
     extra_migration('op.create_table("extra", sa.Column("id", sa.Integer, primary_key=True))')
     with TestClient(create_app()) as fresh:
-        assert fresh.get("/api/servers", headers=admin_headers).status_code == 503
+        assert fresh.get("/api/workspaces", headers=admin_headers).status_code == 503
         migrate.upgrade_database(data_dir / "vservx.db", by="command line", user_id=None, source="cli")
-        assert fresh.get("/api/servers", headers=admin_headers).status_code == 200
+        assert fresh.get("/api/workspaces", headers=admin_headers).status_code == 200

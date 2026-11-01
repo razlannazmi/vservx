@@ -31,11 +31,12 @@ def public_line(key: asyncssh.SSHKey) -> str:
 
 
 def create_saved_key(
-    client: TestClient, name: str = "lab-key", passphrase: str | None = None
+    client: TestClient, base: str, name: str = "lab-key", passphrase: str | None = None
 ) -> tuple[int, asyncssh.SSHKey]:
-    """Save a fresh key through the API. The client must carry admin headers."""
+    """Save a fresh key through the API into the workspace at base ("/api/workspaces/<id>").
+    The client must carry an operator's headers."""
     text, key = make_key(passphrase)
     body = {"name": name, "private_key": text, "passphrase": passphrase}
-    response = client.post("/api/ssh-keys", json=body)
+    response = client.post(f"{base}/ssh-keys", json=body)
     assert response.status_code == 201, response.text
     return response.json()["id"], key

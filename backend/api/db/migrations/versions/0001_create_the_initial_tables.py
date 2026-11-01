@@ -16,8 +16,38 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
+    op.create_table('app_settings',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('signup_open', sa.Boolean(), nullable=False),
+    sa.PrimaryKeyConstraint('id', name=op.f('pk_app_settings'))
+    )
+    # Sign-up starts open; an app admin still approves every account.
+    op.execute("INSERT INTO app_settings (id, signup_open) VALUES (1, 1)")
+    op.create_table('users',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('name', sa.String(length=255), nullable=False),
+    sa.Column('email', sa.String(length=255), nullable=False),
+    sa.Column('password_hash', sa.String(length=255), nullable=False),
+    sa.Column('role', sa.Enum('admin', 'member', name='userrole', native_enum=False, length=32), nullable=False),
+    sa.Column('is_active', sa.Boolean(), nullable=False),
+    sa.Column('token_version', sa.Integer(), nullable=False),
+    sa.Column('approved_at', sa.DateTime(), nullable=True),
+    sa.Column('last_login_at', sa.DateTime(), nullable=True),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.PrimaryKeyConstraint('id', name=op.f('pk_users')),
+    sa.UniqueConstraint('email', name=op.f('uq_users_email'))
+    )
+    op.create_table('workspaces',
+    sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('name', sa.String(length=255), nullable=False),
+    sa.Column('created_at', sa.DateTime(), nullable=False),
+    sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.PrimaryKeyConstraint('id', name=op.f('pk_workspaces'))
+    )
     op.create_table('ssh_keys',
     sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('workspace_id', sa.Integer(), nullable=False),
     sa.Column('name', sa.String(length=255), nullable=False),
     sa.Column('private_key', sa.String(), nullable=False),
     sa.Column('passphrase', sa.String(), nullable=True),
@@ -26,25 +56,29 @@ def upgrade() -> None:
     sa.Column('public_key', sa.Text(), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
+    sa.ForeignKeyConstraint(['workspace_id'], ['workspaces.id'], name=op.f('fk_ssh_keys_workspace_id_workspaces'), ondelete='RESTRICT'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_ssh_keys')),
-    sa.UniqueConstraint('name', name=op.f('uq_ssh_keys_name'))
+    sa.UniqueConstraint('workspace_id', 'name', name=op.f('uq_ssh_keys_workspace_id'))
     )
-    op.create_table('users',
-    sa.Column('id', sa.Integer(), nullable=False),
-    sa.Column('name', sa.String(length=255), nullable=False),
-    sa.Column('email', sa.String(length=255), nullable=False),
-    sa.Column('password_hash', sa.String(length=255), nullable=False),
-    sa.Column('role', sa.Enum('admin', 'operator', 'viewer', name='userrole', native_enum=False, length=32), nullable=False),
-    sa.Column('is_active', sa.Boolean(), nullable=False),
-    sa.Column('token_version', sa.Integer(), nullable=False),
-    sa.Column('last_login_at', sa.DateTime(), nullable=True),
+    with op.batch_alter_table('ssh_keys', schema=None) as batch_op:
+        batch_op.create_index(batch_op.f('ix_ssh_keys_workspace_id'), ['workspace_id'], unique=False)
+
+    op.create_table('workspace_members',
+    sa.Column('workspace_id', sa.Integer(), nullable=False),
+    sa.Column('user_id', sa.Integer(), nullable=False),
+    sa.Column('role', sa.Enum('viewer', 'operator', 'owner', name='workspacerole', native_enum=False, length=32), nullable=False),
     sa.Column('created_at', sa.DateTime(), nullable=False),
-    sa.Column('updated_at', sa.DateTime(), nullable=False),
-    sa.PrimaryKeyConstraint('id', name=op.f('pk_users')),
-    sa.UniqueConstraint('email', name=op.f('uq_users_email'))
+    sa.ForeignKeyConstraint(['user_id'], ['users.id'], name=op.f('fk_workspace_members_user_id_users'), ondelete='CASCADE'),
+    sa.ForeignKeyConstraint(['workspace_id'], ['workspaces.id'], name=op.f('fk_workspace_members_workspace_id_workspaces'), ondelete='CASCADE'),
+    sa.PrimaryKeyConstraint('workspace_id', 'user_id', name=op.f('pk_workspace_members'))
     )
+    with op.batch_alter_table('workspace_members', schema=None) as batch_op:
+        batch_op.create_index('ix_workspace_members_one_owner', ['workspace_id'], unique=True, sqlite_where=sa.text("role = 'owner'"))
+        batch_op.create_index(batch_op.f('ix_workspace_members_user_id'), ['user_id'], unique=False)
+
     op.create_table('servers',
     sa.Column('id', sa.Integer(), nullable=False),
+    sa.Column('workspace_id', sa.Integer(), nullable=False),
     sa.Column('name', sa.String(length=255), nullable=False),
     sa.Column('host', sa.String(length=255), nullable=False),
     sa.Column('port', sa.Integer(), nullable=False),
@@ -55,16 +89,26 @@ def upgrade() -> None:
     sa.Column('jump_server_id', sa.Integer(), nullable=True),
     sa.Column('jump_only', sa.Boolean(), nullable=False),
     sa.Column('host_key', sa.Text(), nullable=True),
+    sa.Column('host_key_recorded_at', sa.DateTime(), nullable=True),
+    sa.Column('last_test_at', sa.DateTime(), nullable=True),
+    sa.Column('last_test_ok', sa.Boolean(), nullable=True),
+    sa.Column('last_test_elapsed_ms', sa.Integer(), nullable=True),
+    sa.Column('last_test_hostname', sa.String(length=255), nullable=True),
+    sa.Column('last_test_failure', sa.Enum('unreachable', 'timeout', 'auth_failed', 'host_key_changed', 'credentials_unreadable', 'error', name='connectionfailure', native_enum=False, length=32), nullable=True),
+    sa.Column('last_test_failed_hop', sa.String(length=255), nullable=True),
+    sa.Column('last_test_message', sa.Text(), nullable=True),
     sa.Column('created_at', sa.DateTime(), nullable=False),
     sa.Column('updated_at', sa.DateTime(), nullable=False),
     sa.ForeignKeyConstraint(['jump_server_id'], ['servers.id'], name=op.f('fk_servers_jump_server_id_servers'), ondelete='RESTRICT'),
     sa.ForeignKeyConstraint(['ssh_key_id'], ['ssh_keys.id'], name=op.f('fk_servers_ssh_key_id_ssh_keys'), ondelete='RESTRICT'),
+    sa.ForeignKeyConstraint(['workspace_id'], ['workspaces.id'], name=op.f('fk_servers_workspace_id_workspaces'), ondelete='RESTRICT'),
     sa.PrimaryKeyConstraint('id', name=op.f('pk_servers')),
-    sa.UniqueConstraint('name', name=op.f('uq_servers_name'))
+    sa.UniqueConstraint('workspace_id', 'name', name=op.f('uq_servers_workspace_id'))
     )
     with op.batch_alter_table('servers', schema=None) as batch_op:
         batch_op.create_index(batch_op.f('ix_servers_jump_server_id'), ['jump_server_id'], unique=False)
         batch_op.create_index(batch_op.f('ix_servers_ssh_key_id'), ['ssh_key_id'], unique=False)
+        batch_op.create_index(batch_op.f('ix_servers_workspace_id'), ['workspace_id'], unique=False)
 
     op.create_table('instances',
     sa.Column('id', sa.Integer(), nullable=False),
@@ -141,9 +185,20 @@ def downgrade() -> None:
 
     op.drop_table('instances')
     with op.batch_alter_table('servers', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_servers_workspace_id'))
         batch_op.drop_index(batch_op.f('ix_servers_ssh_key_id'))
         batch_op.drop_index(batch_op.f('ix_servers_jump_server_id'))
 
     op.drop_table('servers')
-    op.drop_table('users')
+    with op.batch_alter_table('workspace_members', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_workspace_members_user_id'))
+        batch_op.drop_index('ix_workspace_members_one_owner', sqlite_where=sa.text("role = 'owner'"))
+
+    op.drop_table('workspace_members')
+    with op.batch_alter_table('ssh_keys', schema=None) as batch_op:
+        batch_op.drop_index(batch_op.f('ix_ssh_keys_workspace_id'))
+
     op.drop_table('ssh_keys')
+    op.drop_table('workspaces')
+    op.drop_table('users')
+    op.drop_table('app_settings')
