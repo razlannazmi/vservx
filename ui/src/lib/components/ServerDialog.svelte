@@ -1,0 +1,309 @@
+<script lang="ts">
+  import { untrack } from "svelte";
+  import { toast } from "svelte-sonner";
+  import {
+    api,
+    errorMessage,
+    type ConnectionTestResult,
+    type SavedKeyRead,
+    type ServerCreate,
+    type ServerRead,
+    type ServerUpdate,
+  } from "$lib/api/client";
+  import ConnectionResult from "$lib/components/ConnectionResult.svelte";
+  import KeyDialog from "$lib/components/KeyDialog.svelte";
+  import * as AlertDialog from "$lib/components/ui/alert-dialog/index.js";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import * as Dialog from "$lib/components/ui/dialog/index.js";
+  import { Input } from "$lib/components/ui/input/index.js";
+  import { Label } from "$lib/components/ui/label/index.js";
+  import * as Select from "$lib/components/ui/select/index.js";
+  import { Switch } from "$lib/components/ui/switch/index.js";
+
+  // With `server`, the dialog edits it; otherwise it adds a new one.
+  let {
+    open = $bindable(false),
+    workspaceId,
+    server = null,
+    servers,
+    keys,
+    onSaved,
+    onDeleted,
+    onKeyAdded,
+  }: {
+    open?: boolean;
+    workspaceId: number;
+    server?: ServerRead | null;
+    servers: ServerRead[];
+    keys: SavedKeyRead[];
+    onSaved: (server: ServerRead) => void | Promise<void>;
+    onDeleted: () => void | Promise<void>;
+    onKeyAdded: (key: SavedKeyRead) => void | Promise<void>;
+  } = $props();
+
+  const PASSWORD = "password";
+  const NEW_KEY = "new-key";
+  const DIRECT = "direct";
+
+  let form = $state<HTMLFormElement | null>(null);
+  let name = $state("");
+  let host = $state("");
+  let port = $state<number | null>(22);
+  let username = $state("");
+  // "password", or a saved key's id.
+  let signsIn = $state(PASSWORD);
+  let password = $state("");
+  let jump = $state(DIRECT);
+  let jumpOnly = $state(false);
+  let result = $state<ConnectionTestResult | null>(null);
+  let saving = $state(false);
+  let testing = $state(false);
+  let addingKey = $state(false);
+  let confirmingDelete = $state(false);
+  let deleting = $state(false);
+  let deleteRefusal = $state<string | null>(null);
+
+  const usesKey = $derived(signsIn !== PASSWORD);
+  // Stored secrets never reach the browser: an empty field keeps the saved password.
+  const keepsPassword = $derived(!usesKey && server?.auth_type === "password" && server.has_password);
+  const signsInLabel = $derived(
+    usesKey ? `Saved key “${keys.find((each) => String(each.id) === signsIn)?.name ?? "…"}”` : "Password",
+  );
+  const jumpChoices = $derived(servers.filter((each) => each.id !== server?.id));
+  const jumpLabel = $derived(
+    jump === DIRECT ? "None, connect directly" : (servers.find((each) => String(each.id) === jump)?.name ?? "…"),
+  );
+
+  // Each opening starts from the server being edited, or blank.
+  $effect(() => {
+    if (open) untrack(reset);
+  });
+
+  function reset() {
+    name = server?.name ?? "";
+    host = server?.host ?? "";
+    port = server?.port ?? 22;
+    username = server?.username ?? "";
+    signsIn = server?.auth_type === "key" && server.ssh_key_id !== null ? String(server.ssh_key_id) : PASSWORD;
+    password = "";
+    jump = server?.jump_server_id != null ? String(server.jump_server_id) : DIRECT;
+    jumpOnly = server?.jump_only ?? false;
+    result = null;
+  }
+
+  // "Add a new key…" opens the key dialog and keeps the current choice until a key is saved.
+  function chooseSignIn(value: string) {
+    if (value === NEW_KEY) addingKey = true;
+    else signsIn = value;
+  }
+
+  async function keyAdded(key: SavedKeyRead) {
+    await onKeyAdded(key);
+    signsIn = String(key.id);
+  }
+
+  function settings(): ServerCreate {
+    return {
+      name: name.trim(),
+      host: host.trim(),
+      port: port ?? 22,
+      username: username.trim(),
+      auth_type: usesKey ? "key" : "password",
+      ssh_key_id: usesKey ? Number(signsIn) : null,
+      password: usesKey ? null : password,
+      jump_server_id: jump === DIRECT ? null : Number(jump),
+      jump_only: jumpOnly,
+    };
+  }
+
+  function changes(): ServerUpdate {
+    const { password: typed, ...rest } = settings();
+    // Switching to a key clears the stored password; an empty password field keeps it.
+    if (usesKey) return { ...rest, password: null };
+    return typed ? { ...rest, password: typed } : rest;
+  }
+
+  async function test() {
+    if (!form?.reportValidity()) return;
+    if (!usesKey && !password) {
+      // The saved password never comes back to the browser, so it can't be tried from here.
+      toast.error("Type the password to test these settings");
+      return;
+    }
+    testing = true;
+    result = null;
+    const { data, error } = await api.POST("/api/workspaces/{workspace_id}/servers/test", {
+      params: { path: { workspace_id: workspaceId } },
+      body: settings(),
+    });
+    testing = false;
+    if (error || !data) {
+      toast.error(errorMessage(error, "Couldn't run the test"));
+      return;
+    }
+    result = data;
+  }
+
+  async function save(event: SubmitEvent) {
+    event.preventDefault();
+    saving = true;
+    const path = { workspace_id: workspaceId };
+    const { data, error } = server
+      ? await api.PATCH("/api/workspaces/{workspace_id}/servers/{server_id}", {
+          params: { path: { ...path, server_id: server.id } },
+          body: changes(),
+        })
+      : await api.POST("/api/workspaces/{workspace_id}/servers", { params: { path }, body: settings() });
+    saving = false;
+    if (error || !data) {
+      toast.error(errorMessage(error, "Couldn't save the server"));
+      return;
+    }
+    open = false;
+    await onSaved(data);
+  }
+
+  function askToDelete() {
+    deleteRefusal = null;
+    confirmingDelete = true;
+  }
+
+  async function remove() {
+    if (!server) return;
+    deleting = true;
+    const { error } = await api.DELETE("/api/workspaces/{workspace_id}/servers/{server_id}", {
+      params: { path: { workspace_id: workspaceId, server_id: server.id } },
+    });
+    deleting = false;
+    if (error) {
+      // Refused while other servers jump through this one: the backend says how many.
+      deleteRefusal = errorMessage(error, "Couldn't delete the server");
+      return;
+    }
+    confirmingDelete = false;
+    open = false;
+    await onDeleted();
+  }
+</script>
+
+<Dialog.Root bind:open>
+  <Dialog.Content class="max-h-[90svh] overflow-y-auto sm:max-w-lg">
+    <form bind:this={form} class="space-y-4" onsubmit={save}>
+      <Dialog.Header>
+        <Dialog.Title>{server ? `Edit ${server.name}` : "Add a server"}</Dialog.Title>
+        <Dialog.Description>How vservx reaches it over SSH.</Dialog.Description>
+      </Dialog.Header>
+
+      <div class="grid grid-cols-[minmax(0,1fr)_6rem] gap-3">
+        <div class="col-span-2 space-y-2">
+          <Label for="server-name">Name</Label>
+          <Input id="server-name" required maxlength={255} placeholder="gpu-7" bind:value={name} />
+        </div>
+        <div class="space-y-2">
+          <Label for="server-host">Host</Label>
+          <Input id="server-host" class="font-mono" required maxlength={255} placeholder="10.0.4.17" bind:value={host} />
+        </div>
+        <div class="space-y-2">
+          <Label for="server-port">Port</Label>
+          <Input id="server-port" class="font-mono" type="number" required min={1} max={65535} bind:value={port} />
+        </div>
+        <div class="col-span-2 space-y-2">
+          <Label for="server-user">User</Label>
+          <Input id="server-user" class="font-mono" required maxlength={255} placeholder="ubuntu" bind:value={username} />
+        </div>
+      </div>
+
+      <div class="space-y-2">
+        <Label for="server-signs-in">Signs in with</Label>
+        <Select.Root type="single" bind:value={() => signsIn, chooseSignIn}>
+          <Select.Trigger id="server-signs-in" class="w-full">{signsInLabel}</Select.Trigger>
+          <Select.Content>
+            <Select.Item value={PASSWORD} label="Password" />
+            {#each keys as key (key.id)}
+              <Select.Item value={String(key.id)} label={`Saved key “${key.name}”`} />
+            {/each}
+            <Select.Separator />
+            <Select.Item value={NEW_KEY} label="Add a new key…" />
+          </Select.Content>
+        </Select.Root>
+      </div>
+
+      {#if !usesKey}
+        <div class="space-y-2">
+          <Label for="server-password">Password</Label>
+          <Input
+            id="server-password"
+            type="password"
+            autocomplete="new-password"
+            required={!keepsPassword}
+            placeholder={keepsPassword ? "Unchanged" : undefined}
+            bind:value={password}
+          />
+          {#if keepsPassword}
+            <p class="text-xs text-muted-foreground">Leave it empty to keep the saved password.</p>
+          {/if}
+        </div>
+      {/if}
+
+      <div class="space-y-2">
+        <Label for="server-jump">Jump host</Label>
+        <Select.Root type="single" bind:value={jump}>
+          <Select.Trigger id="server-jump" class="w-full">{jumpLabel}</Select.Trigger>
+          <Select.Content>
+            <Select.Item value={DIRECT} label="None, connect directly" />
+            {#each jumpChoices as each (each.id)}
+              <Select.Item value={String(each.id)} label={each.name} />
+            {/each}
+          </Select.Content>
+        </Select.Root>
+      </div>
+
+      <div class="flex items-center justify-between gap-4">
+        <Label for="server-jump-only" class="flex-col items-start gap-1">
+          Use only as a jump host
+          <span class="text-xs font-normal text-muted-foreground">Listed under Jump hosts, for reaching other servers.</span>
+        </Label>
+        <Switch id="server-jump-only" bind:checked={jumpOnly} />
+      </div>
+
+      {#if result}
+        <ConnectionResult {result} />
+      {/if}
+
+      <Dialog.Footer class="sm:justify-between">
+        <div>
+          {#if server}
+            <Button type="button" variant="ghost" onclick={askToDelete}>Delete</Button>
+          {/if}
+        </div>
+        <div class="flex flex-col-reverse gap-2 sm:flex-row">
+          <Button type="button" variant="outline" onclick={test} disabled={testing}>{testing ? "Testing…" : "Test"}</Button>
+          <Button type="button" variant="outline" onclick={() => (open = false)}>Cancel</Button>
+          <Button type="submit" disabled={saving}>Save</Button>
+        </div>
+      </Dialog.Footer>
+    </form>
+  </Dialog.Content>
+</Dialog.Root>
+
+<KeyDialog bind:open={addingKey} {workspaceId} onSaved={keyAdded} />
+
+{#if server}
+  <AlertDialog.Root bind:open={confirmingDelete}>
+    <AlertDialog.Content>
+      <AlertDialog.Header>
+        <AlertDialog.Title>Delete {server.name}?</AlertDialog.Title>
+        <AlertDialog.Description>
+          vservx forgets this server and its stored password. Nothing on the server itself changes.
+        </AlertDialog.Description>
+      </AlertDialog.Header>
+      {#if deleteRefusal}
+        <p role="alert" class="rounded-lg border px-3 py-2 text-sm">{deleteRefusal}</p>
+      {/if}
+      <AlertDialog.Footer>
+        <AlertDialog.Cancel>Cancel</AlertDialog.Cancel>
+        <Button onclick={remove} disabled={deleting}>Delete</Button>
+      </AlertDialog.Footer>
+    </AlertDialog.Content>
+  </AlertDialog.Root>
+{/if}
