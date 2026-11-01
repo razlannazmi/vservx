@@ -1,0 +1,173 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn-svelte/tailwind.css";
+/* Bundled with the app: vservx may run where there's no internet. */
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Black and white; colour only ever means a status, and status always has words beside it.
+ * Focus rings use the text colour. No blue anywhere.
+ */
+:root {
+	--background: #fafafa;
+	--foreground: #09090b;
+	--card: #ffffff;
+	--card-foreground: #09090b;
+	--popover: #ffffff;
+	--popover-foreground: #09090b;
+	--primary: #09090b;
+	--primary-foreground: #fafafa;
+	--secondary: #f4f4f5;
+	--secondary-foreground: #09090b;
+	--muted: #f4f4f5;
+	--muted-foreground: #71717a;
+	--accent: #f4f4f5;
+	--accent-foreground: #09090b;
+	--destructive: #dc2626;
+	--border: #e4e4e7;
+	--input: #e4e4e7;
+	--ring: #09090b;
+	--chart-1: #d4d4d8;
+	--chart-2: #a1a1aa;
+	--chart-3: #71717a;
+	--chart-4: #52525b;
+	--chart-5: #27272a;
+	--radius: 0.625rem;
+	--sidebar: #f4f4f5;
+	--sidebar-foreground: #09090b;
+	--sidebar-primary: #09090b;
+	--sidebar-primary-foreground: #fafafa;
+	--sidebar-accent: #e4e4e7;
+	--sidebar-accent-foreground: #09090b;
+	--sidebar-border: #e4e4e7;
+	--sidebar-ring: #09090b;
+
+	--status-ok: #16a34a;
+	--status-bad: #dc2626;
+	--status-warn: #d97706;
+	--status-none: #a1a1aa;
+	--warn-bg: #fffbeb;
+	--warn-border: #fcd34d;
+}
+
+.dark {
+	--background: #09090b;
+	--foreground: #fafafa;
+	--card: #18181b;
+	--card-foreground: #fafafa;
+	--popover: #18181b;
+	--popover-foreground: #fafafa;
+	--primary: #fafafa;
+	--primary-foreground: #09090b;
+	--secondary: #27272a;
+	--secondary-foreground: #fafafa;
+	--muted: #27272a;
+	--muted-foreground: #a1a1aa;
+	--accent: #27272a;
+	--accent-foreground: #fafafa;
+	--destructive: #ef4444;
+	--border: #27272a;
+	--input: #3f3f46;
+	--ring: #fafafa;
+	--chart-1: #3f3f46;
+	--chart-2: #52525b;
+	--chart-3: #71717a;
+	--chart-4: #a1a1aa;
+	--chart-5: #d4d4d8;
+	--sidebar: #111113;
+	--sidebar-foreground: #fafafa;
+	--sidebar-primary: #fafafa;
+	--sidebar-primary-foreground: #09090b;
+	--sidebar-accent: #27272a;
+	--sidebar-accent-foreground: #fafafa;
+	--sidebar-border: #27272a;
+	--sidebar-ring: #fafafa;
+
+	--status-ok: #22c55e;
+	--status-bad: #ef4444;
+	--status-warn: #f59e0b;
+	--status-none: #52525b;
+	--warn-bg: #1c1407;
+	--warn-border: #78350f;
+}
+
+@theme inline {
+	--font-sans: "Geist Variable", system-ui, sans-serif;
+	--font-mono: "Geist Mono Variable", ui-monospace, monospace;
+	--color-status-ok: var(--status-ok);
+	--color-status-bad: var(--status-bad);
+	--color-status-warn: var(--status-warn);
+	--color-status-none: var(--status-none);
+	--color-warn-bg: var(--warn-bg);
+	--color-warn-border: var(--warn-border);
+	--color-sidebar-ring: var(--sidebar-ring);
+	--color-sidebar-border: var(--sidebar-border);
+	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+	--color-sidebar-accent: var(--sidebar-accent);
+	--color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+	--color-sidebar-primary: var(--sidebar-primary);
+	--color-sidebar-foreground: var(--sidebar-foreground);
+	--color-sidebar: var(--sidebar);
+	--color-chart-5: var(--chart-5);
+	--color-chart-4: var(--chart-4);
+	--color-chart-3: var(--chart-3);
+	--color-chart-2: var(--chart-2);
+	--color-chart-1: var(--chart-1);
+	--color-ring: var(--ring);
+	--color-input: var(--input);
+	--color-border: var(--border);
+	--color-destructive: var(--destructive);
+	--color-accent-foreground: var(--accent-foreground);
+	--color-accent: var(--accent);
+	--color-muted-foreground: var(--muted-foreground);
+	--color-muted: var(--muted);
+	--color-secondary-foreground: var(--secondary-foreground);
+	--color-secondary: var(--secondary);
+	--color-primary-foreground: var(--primary-foreground);
+	--color-primary: var(--primary);
+	--color-popover-foreground: var(--popover-foreground);
+	--color-popover: var(--popover);
+	--color-card-foreground: var(--card-foreground);
+	--color-card: var(--card);
+	--color-foreground: var(--foreground);
+	--color-background: var(--background);
+	--radius-sm: calc(var(--radius) * 0.6);
+	--radius-md: calc(var(--radius) * 0.8);
+	--radius-lg: var(--radius);
+	--radius-xl: calc(var(--radius) * 1.4);
+	--radius-2xl: calc(var(--radius) * 1.8);
+	--radius-3xl: calc(var(--radius) * 2.2);
+	--radius-4xl: calc(var(--radius) * 2.6);
+}
+
+@layer base {
+	* {
+		@apply border-border outline-ring/50;
+	}
+	html {
+		@apply font-sans;
+		/* The theme change fades. */
+		transition:
+			background-color 250ms ease,
+			color 250ms ease;
+	}
+	body {
+		@apply bg-background text-foreground antialiased;
+		transition: inherit;
+	}
+}
+
+/* Every animation and transition turns off when the operating system asks for less motion. */
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+		scroll-behavior: auto !important;
+	}
+}
