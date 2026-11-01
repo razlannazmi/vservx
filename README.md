@@ -20,27 +20,32 @@ On bare GPU servers, checking which models are running, on which ports, and how 
 - Nothing is installed on the remote server, and nothing on the machine running vservx (its `~/.ssh`, agent or config) is used
 
 ### Discovery
-Finds vLLM instances however they were launched:
+vservx watches every saved server that has passed a connection test, all the time, over one SSH connection per server that it keeps open. It looks for vLLM containers every minute (and when you press Refresh). Nothing is installed on the server, but it needs:
 
-| Launch method | How it's detected |
-|---|---|
-| Docker | `docker ps` filtered by the `vllm/vllm-openai` image or command |
-| systemd | `systemctl list-units` matching vllm |
-| Bare process | `ps` matching `vllm serve` / `vllm.entrypoints` |
+- **Docker.** vLLM instances run in Docker containers, found with `docker ps` and `docker inspect`. A container counts as vLLM when its image or its command mentions vLLM, so custom images are found too. (systemd services and plain processes aren't found yet.)
+- **`nvidia-smi`** for the GPU panel. Optional.
+- **SSH TCP forwarding** (`AllowTcpForwarding`, on by default) **or `curl`** on the server, to reach vLLM's port from the server's own side. vLLM's port never needs to be exposed.
 
-Each candidate is confirmed by calling `/v1/models` on its port.
+**Docker through sudo.** If your user can't run `docker` directly, vservx tries `sudo -n docker`, then `sudo` with a password: the server's sign-in password, or the sudo password in its settings for servers that sign in with a key. The password goes to sudo on standard input, never on a command line, and only `docker ps` and `docker inspect` ever run through sudo. The safer setup is a sudoers rule that lets your user run only docker without a password, which vservx picks up by itself:
+
+```
+<user> ALL=(root) NOPASSWD: /usr/bin/docker
+```
+
+**Which servers are watched.** Servers marked "jump host only" aren't searched. A server is watched only once a connection test has recorded its host key (and its jump hosts'), so vservx never starts trusting a key in the background. A rejected sign-in stops the watching until the server's settings change or a connection test passes, instead of retrying a wrong password. Of a container's environment, vservx keeps only `VLLM_API_KEY` (in memory, to ask `/v1/models` for the context length) and `NVIDIA_VISIBLE_DEVICES`.
+
+Each instance shows its state (Ready, Starting, Not responding, Restarting, Crashed, Stopped, Paused), model, port, context length, GPUs, image and vLLM version. A crashed container shows its exit code, whether it ran out of memory, and how often Docker restarted it.
 
 ### Metrics
-vservx reads vLLM's Prometheus `/metrics` endpoint through the SSH session, so vLLM ports never need to be exposed. It tracks:
+Every 10 seconds vservx reads each ready instance's `/health` and Prometheus `/metrics` through the SSH connection, and keeps:
 
 - **Load:** running and waiting requests
 - **KV cache:** cache usage percentage
-- **Latency:** time to first token, time per output token, end-to-end latency
-- **Throughput:** prompt and generation tokens
-- **Pressure:** preemptions
-- **GPU:** utilization and memory from `nvidia-smi`, mapped to vLLM processes
+- **Throughput:** prompt and output tokens per second
+- **Latency:** time to first token, averaged over the last minute
+- **GPU:** utilization, memory and temperature from `nvidia-smi`, and which containers use each GPU
 
-About 15 minutes of history is kept in memory for live charts.
+15 minutes of history is kept in memory for the charts; it starts again empty when vservx restarts. Longer history is Prometheus's job (see Integrations).
 
 ### Management
 - **Stop / Force kill / Restart:** uses the right mechanism for each launch type (Docker, systemd, or process signals)
@@ -140,6 +145,8 @@ The API starts on http://127.0.0.1:8000 with auto-reload, and interactive docs a
 
 On first start, vservx creates an admin account and prints its generated password to the console once. To choose the credentials yourself, set `VSERVX_ADMIN_EMAIL` and `VSERVX_ADMIN_PASSWORD` before the first start.
 
+Run a single vservx process. Each process watches every server, so several workers would watch them all several times over.
+
 ### Run the web app
 
 The web app lives in `ui/` and needs Node.js 20.19 or newer. In development, start the backend on port 8000 as above, then from `ui/`:
@@ -179,7 +186,15 @@ From `ui/`, `npm test` runs the unit tests and `npm run check` type-checks the a
 
 ### Configuration
 
-Settings come from `VSERVX_*` environment variables or a `.env` file in the directory the app is started from. `backend/.env.example` lists every option with its default.
+Settings come from `VSERVX_*` environment variables or a `.env` file in the directory the app is started from. `backend/.env.example` lists every option with its default. Those for watching servers:
+
+| Setting | Default | |
+|---|---|---|
+| `VSERVX_WATCH_ENABLED` | `true` | Watch servers at all |
+| `VSERVX_USAGE_INTERVAL_SECONDS` | `10` | How often health, usage and GPUs are read |
+| `VSERVX_DISCOVERY_INTERVAL_SECONDS` | `60` | How often vLLM containers are looked for |
+| `VSERVX_HISTORY_MINUTES` | `15` | Usage history kept in memory for the charts |
+| `VSERVX_WATCH_CONCURRENCY` | `8` | Most servers doing SSH work at the same moment |
 
 Local data lives in `~/.config/vservx/` (override with `VSERVX_DATA_DIR`). This directory is the one thing to back up, and the one volume to mount when running in Docker:
 

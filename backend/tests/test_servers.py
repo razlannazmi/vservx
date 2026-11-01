@@ -1,6 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.enums import AuthType
@@ -128,3 +128,16 @@ def test_jump_host_in_use_cannot_be_deleted(api: TestClient, w: str) -> None:
 
     assert response.status_code == 409
     assert "1 server" in response.json()["detail"]
+
+
+def test_sudo_password_is_stored_but_never_returned(api: TestClient, w: str, closed_port: int, db: Db) -> None:
+    body = {"name": "gpu", "host": "127.0.0.1", "port": closed_port, "username": "u",
+            "auth_type": "password", "password": "pw", "sudo_password": "sudo-secret"}
+    created = api.post(f"{w}/servers", json=body)
+    assert created.status_code == 201 and created.json()["has_sudo_password"] is True
+    assert "sudo-secret" not in created.text
+    server_id = created.json()["id"]
+    stored = db(lambda s: s.scalar(select(Server.sudo_password).where(Server.id == server_id)))
+    assert stored == "sudo-secret"
+    assert api.patch(f"{w}/servers/{server_id}", json={"name": "gpu-2"}).json()["has_sudo_password"] is True
+    assert api.patch(f"{w}/servers/{server_id}", json={"sudo_password": None}).json()["has_sudo_password"] is False

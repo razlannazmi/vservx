@@ -3,10 +3,13 @@ event loop of each asyncio.run() or TestClient request that connects to it."""
 
 import asyncio
 import threading
-from collections.abc import Coroutine
+from collections.abc import Callable, Coroutine
 from typing import Any
 
 import asyncssh
+
+# (command, stdin) -> (stdout, stderr, exit status)
+Commands = Callable[[str, str], tuple[str, str, int]]
 
 
 class BackgroundLoop:
@@ -26,6 +29,9 @@ class BackgroundLoop:
 class _Server(asyncssh.SSHServer):
     def __init__(self, fake: "FakeSSHD") -> None:
         self._fake = fake
+
+    def connection_made(self, conn: asyncssh.SSHServerConnection) -> None:
+        self._fake.connections.append(conn)
 
     def begin_auth(self, username: str) -> bool:
         return True  # always require authentication
@@ -49,7 +55,8 @@ class _Server(asyncssh.SSHServer):
 
 
 class FakeSSHD:
-    """Accepts the given password and/or client key and answers any command with its hostname."""
+    """Accepts the given password and/or client key and answers any command with its hostname,
+    or with `commands` when given. Port forwards go straight through, like a jump host's."""
 
     def __init__(
         self,
@@ -58,12 +65,15 @@ class FakeSSHD:
         password: str | None = None,
         client_key: asyncssh.SSHKey | None = None,
         hostname: str = "fake-host",
+        commands: Commands | None = None,
     ) -> None:
         self.password = password
         self.client_key = client_key
         self.hostname = hostname
+        self.commands = commands
         self.host_key = asyncssh.generate_private_key("ssh-ed25519")
         self.auth_attempts: list[str] = []
+        self.connections: list[asyncssh.SSHServerConnection] = []
         self.host = "127.0.0.1"
         self._loop = loop
 
@@ -76,12 +86,34 @@ class FakeSSHD:
         self.port: int = self._acceptor.get_port()
 
     async def _handle(self, process: asyncssh.SSHServerProcess) -> None:
-        process.stdout.write(f"{self.hostname}\n")
-        process.exit(0)
+        if self.commands is None:
+            process.stdout.write(f"{self.hostname}\n")
+            process.exit(0)
+            return
+        command = process.command or ""
+        # Only these commands are given anything on stdin; waiting for EOF on others would hang.
+        stdin = await process.stdin.read() if command.startswith("sudo -S") or "-H @-" in command else ""
+        stdout, stderr, status = self.commands(command, stdin)
+        process.stdout.write(stdout)
+        process.stderr.write(stderr)
+        process.exit(status)
+
+    def stop(self) -> None:
+        """Stop listening and drop every open connection, like a server going off the network."""
+
+        async def stop() -> None:
+            self._acceptor.close()
+            for connection in self.connections:
+                connection.close()
+
+        self._loop.run(stop())
 
     def close(self) -> None:
         async def stop() -> None:
             self._acceptor.close()
+            # wait_closed waits for open connections too, such as a watcher's that outlives the test.
+            for connection in self.connections:
+                connection.close()
             await self._acceptor.wait_closed()
 
         self._loop.run(stop())

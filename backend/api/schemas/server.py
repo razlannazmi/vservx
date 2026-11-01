@@ -45,6 +45,8 @@ class ServerBase(BaseModel):
 
 class ServerCreate(ServerBase):
     password: SecretStr | None = None
+    # Only for running docker through sudo; a password server's sign-in password is used without it.
+    sudo_password: SecretStr | None = None
 
     @model_validator(mode="after")
     def _check_auth(self) -> Self:
@@ -65,6 +67,7 @@ class ServerUpdate(ServerBase):
     auth_type: AuthType | None = None
     jump_only: bool | None = None
     password: SecretStr | None = None
+    sudo_password: SecretStr | None = None
 
     @model_validator(mode="after")
     def _reject_null_required(self) -> Self:
@@ -95,6 +98,7 @@ class ServerRead(ServerBase):
     id: int
     # Secrets are never returned; these only say whether one is stored.
     has_password: bool
+    has_sudo_password: bool
     # None until the first successful login records the server's host key.
     host_key_fingerprint: str | None
     host_key_type: str | None

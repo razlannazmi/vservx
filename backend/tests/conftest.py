@@ -22,12 +22,15 @@ from api.main import create_app
 from api.models import User, WorkspaceMember
 from tests.helpers import ADMIN, USER_PASSWORD, Db, login_headers
 from tests.sshd import BackgroundLoop, FakeSSHD
+from tests.watch_fakes import FakeVLLM
 
 
 @pytest.fixture(autouse=True)
 def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """Point every test at its own data dir so no test touches ~/.config/vservx."""
+    """Point every test at its own data dir so no test touches ~/.config/vservx. Servers aren't
+    watched in the background unless a test turns it on."""
     monkeypatch.setenv("VSERVX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("VSERVX_WATCH_ENABLED", "false")
     get_settings.cache_clear()
     yield tmp_path
     get_settings.cache_clear()
@@ -128,6 +131,14 @@ def sshd(ssh_loop: BackgroundLoop) -> Iterator[Callable[..., FakeSSHD]]:
     yield start
     for server in servers:
         server.close()
+
+
+@pytest.fixture
+def fake_vllm() -> Iterator[FakeVLLM]:
+    """vLLM's HTTP endpoints on a local port, for a FakeSSHD to forward to."""
+    vllm = FakeVLLM()
+    yield vllm
+    vllm.close()
 
 
 @pytest.fixture
