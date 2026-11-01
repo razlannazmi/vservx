@@ -14,9 +14,13 @@ class Settings(BaseSettings):
     host: str = "127.0.0.1"
     port: int = 8000
     data_dir: Path = Path.home() / ".config" / "vservx"
-    # Vite dev server origin; the built UI is served same-origin in production.
-    cors_origins: list[str] = ["http://localhost:5173"]
-    access_token_minutes: int = 60
+    # Other origins allowed to call the API with the session cookie. None by default: the built
+    # UI is served same-origin, and the Vite dev server proxies /api.
+    cors_origins: list[str] = []
+    # Sign-in lasts 7 days; a dashboard that signs you out every hour is a nuisance.
+    access_token_minutes: int = 10080
+    # The built web app (npm run build in ui/), served at "/" when its index.html exists.
+    ui_dir: Path = Path(__file__).resolve().parents[2] / "ui" / "dist"
     # First-run admin account, created only while the users table is empty.
     # With no password set, a random one is generated and logged once.
     admin_name: str = "Admin"

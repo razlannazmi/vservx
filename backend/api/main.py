@@ -1,13 +1,15 @@
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
@@ -19,7 +21,7 @@ from api.db.engine import create_engine, create_sessionmaker
 from api.enums import DatabaseState
 from api.routers import router as api_router
 from api.service.database import DatabaseGate, DatabaseNotReady
-from api.service.users import seed_admin
+from api.service.users import AccountBlocked, seed_admin
 from api.version import __version__
 
 logger = logging.getLogger(__name__)
@@ -84,6 +86,12 @@ async def _database_not_ready_handler(request: Request, exc: Exception) -> JSONR
     return JSONResponse(status_code=503, content=content)
 
 
+async def _account_blocked_handler(request: Request, exc: Exception) -> JSONResponse:
+    # "code" lets the sign-in page tell waiting-for-approval apart from disabled.
+    assert isinstance(exc, AccountBlocked)
+    return JSONResponse(status_code=403, content={"detail": exc.message, "code": exc.code})
+
+
 async def _validation_error_handler(request: Request, exc: Exception) -> JSONResponse:
     # FastAPI's default 422 echoes the rejected value as "input", which can be a password or private key.
     assert isinstance(exc, RequestValidationError)
@@ -101,22 +109,45 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.add_exception_handler(AccountBlocked, _account_blocked_handler)
     app.add_exception_handler(DatabaseNotReady, _database_not_ready_handler)
     app.add_exception_handler(IntegrityError, _integrity_error_handler)
     app.add_exception_handler(RequestValidationError, _validation_error_handler)
     app.include_router(api_router)
 
-    # Placeholder until the built Svelte UI is served at "/".
-    @app.get("/", include_in_schema=False)
-    async def root() -> dict[str, str]:
-        return {
-            "name": "vservx",
-            "version": __version__,
-            "docs": "/docs",
-            "health": "/api/health",
-        }
+    if (settings.ui_dir / "index.html").is_file():
+        _serve_app_files(app, settings.ui_dir)
+    else:
+        # No built web app yet (npm run build in ui/): say where the API is instead.
+        @app.get("/", include_in_schema=False)
+        async def root() -> dict[str, str]:
+            return {
+                "name": "vservx",
+                "version": __version__,
+                "docs": "/docs",
+                "health": "/api/health",
+            }
 
     return app
+
+
+def _serve_app_files(app: FastAPI, ui_dir: Path) -> None:
+    """Serve the built web app. Registered after the API, so API routes match first."""
+    root = ui_dir.resolve()
+    index = root / "index.html"
+    if (root / "assets").is_dir():
+        app.mount("/assets", StaticFiles(directory=root / "assets"), name="assets")
+
+    @app.get("/{path:path}", include_in_schema=False)
+    async def app_files(path: str) -> FileResponse:
+        if path == "api" or path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Not Found")
+        # Files directly in the build folder (favicon.svg); resolve() so "..\" can't climb out.
+        file = (root / path).resolve()
+        if path and file.parent == root and file.is_file():
+            return FileResponse(file)
+        # Every other path is a page of the app, so links into it work on refresh.
+        return FileResponse(index, headers={"Cache-Control": "no-cache"})
 
 
 app = create_app()

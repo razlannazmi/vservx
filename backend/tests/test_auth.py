@@ -32,18 +32,38 @@ def test_login_token_identifies_user(client: TestClient) -> None:
     assert me.json()["role"] == "admin"
 
 
-def test_login_failures_are_indistinguishable(client: TestClient, add_user: Callable[..., None]) -> None:
-    add_user("off@example.com", is_active=False)
-
+def test_login_failures_are_indistinguishable(client: TestClient) -> None:
     responses = [
         _login(client, ADMIN["email"], "wrong-password"),
         _login(client, "nobody@example.com", ADMIN["password"]),
-        _login(client, "off@example.com", USER_PASSWORD),
     ]
 
-    assert [r.status_code for r in responses] == [401, 401, 401]
+    assert [r.status_code for r in responses] == [401, 401]
     # Same body every time, so a caller can't learn which emails have accounts.
     assert len({r.text for r in responses}) == 1
+
+
+def test_browser_session_cookie(client: TestClient) -> None:  # Review Focus 4
+    response = _login(client, ADMIN["email"], ADMIN["password"])
+    cookie = response.headers["set-cookie"].lower()
+    assert "vservx_session=" in cookie and "httponly" in cookie and "samesite=strict" in cookie
+    assert "secure" not in cookie  # plain http test server
+    assert client.get(ME).status_code == 200  # cookie only, no Authorization header
+    assert client.post("/api/workspaces", json={"name": "W"}).status_code == 403
+    assert client.post("/api/workspaces", json={"name": "W"}, headers={"X-Vservx": "1"}).status_code == 201
+    assert client.post("/api/auth/logout").status_code == 204
+    assert client.get(ME).status_code == 401
+
+
+def test_no_cross_origin_access_by_default(client: TestClient) -> None:
+    # Ports don't count for SameSite, so a page on another localhost port gets the cookie sent;
+    # CORS must not also let it add X-Vservx and read the reply.
+    preflight = client.options("/api/workspaces", headers={
+        "Origin": "http://localhost:5173",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "x-vservx",
+    })
+    assert "access-control-allow-origin" not in preflight.headers
 
 
 # Each names the seeded admin (user 1), so only the token itself is wrong.
