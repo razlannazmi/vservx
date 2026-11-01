@@ -20,9 +20,7 @@ from api.db.engine import create_engine, create_sessionmaker
 from api.enums import WorkspaceRole
 from api.main import create_app
 from api.models import User, WorkspaceMember
-from tests.helpers import ADMIN, USER_PASSWORD, Db, login_headers
-from tests.sshd import BackgroundLoop, FakeSSHD
-from tests.watch_fakes import FakeVLLM
+from tests.helpers import ADMIN, USER_PASSWORD, BackgroundLoop, Db, FakeSSHD, FakeVLLM, login_headers
 
 
 @pytest.fixture(autouse=True)
@@ -85,7 +83,7 @@ def db(data_dir: Path) -> Db:
 
 @pytest.fixture
 def add_user(client: TestClient, db: Db) -> Callable[..., None]:
-    """Insert a user directly; there is no user API yet."""
+    """Insert an approved user directly, skipping sign-up and approval."""
 
     def add(email: str, password: str = USER_PASSWORD, **fields: Any) -> None:
         fields.setdefault("password_hash", hash_password(password))
@@ -147,15 +145,6 @@ def closed_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
-
-
-@pytest.fixture
-def silent_port() -> Iterator[int]:
-    """A local port that accepts TCP connections and never says anything."""
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        sock.listen(8)
-        yield sock.getsockname()[1]
 
 
 @pytest.fixture

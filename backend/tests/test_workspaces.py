@@ -4,8 +4,8 @@ from fastapi.testclient import TestClient
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.enums import LaunchType, WorkspaceRole
-from api.models import Instance, SavedKey, Server
+from api.enums import WorkspaceRole
+from api.models import SavedKey, Server
 from tests.helpers import Db, create_saved_key
 
 
@@ -15,13 +15,8 @@ def _server(port: int, name: str = "gpu-1") -> dict:
             "auth_type": "password", "password": "hunter2"}
 
 
-async def _add_instance(session: AsyncSession, server_id: int) -> None:
-    session.add(Instance(server_id=server_id, launch_type=LaunchType.DOCKER, ref="vllm-1"))
-
-
-async def _count_servers_keys_instances(session: AsyncSession) -> tuple[int, int, int]:
-    return tuple([await session.scalar(select(func.count()).select_from(model))
-                  for model in (Server, SavedKey, Instance)])
+async def _count_servers_and_keys(session: AsyncSession) -> tuple[int, int]:
+    return tuple([await session.scalar(select(func.count()).select_from(model)) for model in (Server, SavedKey)])
 
 
 def test_workspace_list_shows_only_mine(
@@ -83,7 +78,7 @@ def test_operator_changes_servers(
     assert client.delete(f"{w}/servers/{response.json()['id']}", headers=operator).status_code == 204
 
 
-def test_links_stay_inside_workspace(api: TestClient, w: str, closed_port: int) -> None:  # Review Focus 1
+def test_links_stay_inside_workspace(api: TestClient, w: str, closed_port: int) -> None:
     home = f"/api/workspaces/{api.post('/api/workspaces', json={'name': 'Home'}).json()['id']}"
     home_key, _ = create_saved_key(api, home)
     home_server = api.post(f"{home}/servers", json=_server(closed_port)).json()["id"]  # same name as below: allowed
@@ -112,7 +107,7 @@ def test_only_owner_manages_the_workspace(
     assert client.delete(w, headers=operator).status_code == 403
 
 
-def test_workspace_keeps_exactly_one_owner(  # Review Focus 3
+def test_workspace_keeps_exactly_one_owner(
     client: TestClient, api: TestClient, w: str,
     member_headers: Callable[[WorkspaceRole], dict[str, str]], outsider_headers: dict[str, str],
 ) -> None:
@@ -135,18 +130,15 @@ def test_member_can_leave(client: TestClient, w: str, member_headers: Callable[[
     assert client.get(w, headers=viewer).status_code == 404
 
 
-def test_owner_deletes_workspace_with_everything_in_it(  # Review Focus 2
-    api: TestClient, w: str, db: Db, closed_port: int
-) -> None:
+def test_owner_deletes_workspace_with_everything_in_it(api: TestClient, w: str, db: Db, closed_port: int) -> None:
     key_id, _ = create_saved_key(api, w)
     bastion = api.post(f"{w}/servers", json=_server(closed_port, "bastion")).json()["id"]
     key_server = _server(closed_port, "gpu") | {"auth_type": "key", "ssh_key_id": key_id,
                                                 "password": None, "jump_server_id": bastion}
-    gpu = api.post(f"{w}/servers", json=key_server).json()["id"]
-    db(lambda s: _add_instance(s, gpu))
+    assert api.post(f"{w}/servers", json=key_server).status_code == 201
     assert api.delete(w).status_code == 204
     assert api.get(w).status_code == 404
-    assert db(_count_servers_keys_instances) == (0, 0, 0)
+    assert db(_count_servers_and_keys) == (0, 0)
 
 
 def test_admin_changes_owner(
