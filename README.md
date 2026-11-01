@@ -15,8 +15,8 @@ On bare GPU servers, checking which models are running, on which ports, and how 
 - **Saved keys:** upload or paste a private key once, give it a name, and pick it for any number of servers. Replacing it updates every server that uses it.
 - **Jump hosts:** any saved server can be the jump host for another, and chains can be any length (laptop → bastion-1 → bastion-2 → gpu-7). Each hop uses its own credentials.
 - **Connection test:** test a saved server, or its settings before saving. The result shows each hop in order and, if one fails, which one and why.
-- **Host keys remembered:** vservx records each server's host key on the first successful login and refuses to connect if it changes, until an admin accepts the new key.
-- Import from `~/.ssh/config`: upload your SSH config to get pre-filled servers to review; nothing is saved until you confirm.
+- **Host keys remembered:** vservx records each server's host key on the first successful login and refuses to connect if it changes, until an operator of its workspace accepts the new key.
+- Import from `~/.ssh/config`: upload your SSH config to get pre-filled servers to review; nothing is saved until you confirm. (In the API today; the web app shows it as coming soon.)
 - Nothing is installed on the remote server, and nothing on the machine running vservx (its `~/.ssh`, agent or config) is used
 
 ### Discovery
@@ -57,6 +57,30 @@ About 15 minutes of history is kept in memory for live charts.
 - **Grafana:** ready-made dashboard JSON
 - **OpenTelemetry:** managed instances can send traces to an OTLP endpoint
 
+## Accounts and workspaces
+
+### Accounts
+
+- **Signing up:** anyone can ask for an account from the sign-in page. The account waits until an app admin approves it; signing in before then says "Your account is waiting for approval". Rejecting a sign-up deletes it.
+- **The sign-up switch:** an admin can close sign-up under Admin → Accounts. The sign-in page then has no "Create an account" link.
+- **Admin or member:** admins approve sign-ups, make or remove admins, disable accounts and set new passwords, see every workspace and change its owner, and run database upgrades. Everyone else is a member. vservx always keeps at least one active admin.
+- **Sessions:** signing in to the web app sets an HttpOnly session cookie that lasts 7 days (`VSERVX_ACCESS_TOKEN_MINUTES`). Changing your password signs out your other sessions. API clients can use the bearer token from `POST /api/auth/login` instead.
+
+### Workspaces
+
+Servers and saved keys belong to a workspace, and only its members see them. Anyone with an approved account can create a workspace and becomes its owner. Each member has a role:
+
+| | Viewer | Operator | Owner |
+|---|:-:|:-:|:-:|
+| See servers, saved keys (never the key itself), members and test results | ✓ | ✓ | ✓ |
+| Test a saved server's connection | ✓ | ✓ | ✓ |
+| Add, edit and delete servers and saved keys; accept a changed host key | | ✓ | ✓ |
+| Add and remove members, and change their roles | | | ✓ |
+| Rename the workspace, hand it to another member, delete it | | | ✓ |
+| Leave the workspace | ✓ | ✓ | after handing it over |
+
+A workspace always has exactly one owner. An app admin only sees inside workspaces they're a member of; Admin → Workspaces lists every workspace and can give any of them a new owner.
+
 ## Architecture
 
 ```
@@ -84,7 +108,7 @@ About 15 minutes of history is kept in memory for live charts.
 | Metrics export | prometheus_client |
 | Storage | SQLite, created automatically at `~/.config/vservx/vservx.db` |
 | Secrets | Encrypted at rest (Fernet) |
-| Frontend | Svelte + Vite |
+| Frontend | Svelte 5 + Vite, TypeScript, Tailwind CSS with shadcn-svelte |
 | Charts | uPlot |
 | Live updates | Server-Sent Events (SSE) |
 
@@ -116,6 +140,31 @@ The API starts on http://127.0.0.1:8000 with auto-reload, and interactive docs a
 
 On first start, vservx creates an admin account and prints its generated password to the console once. To choose the credentials yourself, set `VSERVX_ADMIN_EMAIL` and `VSERVX_ADMIN_PASSWORD` before the first start.
 
+### Run the web app
+
+The web app lives in `ui/` and needs Node.js 20.19 or newer. In development, start the backend on port 8000 as above, then from `ui/`:
+
+```bash
+npm install
+npm run dev
+```
+
+Open http://localhost:5173. The Vite dev server passes `/api` requests on to the backend, so no CORS setup is needed.
+
+For production, build it once from `ui/`:
+
+```bash
+npm run build
+```
+
+FastAPI then serves `ui/dist` at http://127.0.0.1:8000 next to the API, so vservx stays one process. Set `VSERVX_UI_DIR` to serve a build from somewhere else.
+
+After changing the API, regenerate the web app's types from `ui/` (it runs the backend's Python from `.venv` to read the OpenAPI schema):
+
+```bash
+npm run gen:api
+```
+
 ### Test
 
 From `backend/`:
@@ -125,6 +174,8 @@ pytest
 ```
 
 Tests use a temporary data directory and never touch your real database.
+
+From `ui/`, `npm test` runs the unit tests and `npm run check` type-checks the app.
 
 ### Configuration
 
@@ -141,7 +192,7 @@ Local data lives in `~/.config/vservx/` (override with `VSERVX_DATA_DIR`). This 
 
 ### Database upgrades
 
-A new version of vservx can change the database's tables. vservx never changes an existing database on its own: when it starts on a database that is older than the code, it waits until someone runs the upgrade. While it waits, `/api/health` reports `"database": "upgrade_required"`, signing in still works, and every other API call returns 503 with `"code": "database_upgrade_required"`.
+A new version of vservx can change the database's tables. vservx never changes an existing database on its own: when it starts on a database that is older than the code, it waits until someone runs the upgrade. While it waits, `/api/health` reports `"database": "upgrade_required"`, only app admins can sign in, and every other API call returns 503 with `"code": "database_upgrade_required"`.
 
 An admin runs the upgrade in either of two ways:
 
