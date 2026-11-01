@@ -6,6 +6,7 @@ from contextlib import AsyncExitStack
 import asyncssh
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.db.base import utcnow
 from api.enums import AuthType
 from api.models import SavedKey, Server
 from api.schemas.connection import ConnectionTestResult, HopResult
@@ -54,7 +55,7 @@ async def build_hops(session: AsyncSession, server: Server) -> list[tuple[Server
         if len(chain) > MAX_JUMP_HOSTS:
             raise ValueError(f"More than {MAX_JUMP_HOSTS} jump hosts in front of {server.name}")
         jump = await session.get(Server, jump_id)
-        if jump is None:
+        if jump is None or jump.workspace_id != server.workspace_id:
             raise ValueError(f"Jump server {jump_id} does not exist")
         chain.append(jump)
         jump_id = jump.jump_server_id
@@ -62,19 +63,35 @@ async def build_hops(session: AsyncSession, server: Server) -> list[tuple[Server
     return [(stored, await _hop(session, stored)) for stored in chain]
 
 
+def _remember_test(server: Server, result: ConnectionTestResult) -> None:
+    server.last_test_at = utcnow()
+    server.last_test_ok = result.ok
+    server.last_test_elapsed_ms = result.elapsed_ms
+    server.last_test_hostname = result.hostname[:255] if result.ok and result.hostname else None
+    # On failure the failing hop is the last one attempted.
+    failed = result.hops[-1] if not result.ok and result.hops else None
+    server.last_test_failure = failed.reason if failed else None
+    server.last_test_failed_hop = failed.name[:255] if failed else None
+    server.last_test_message = failed.message if failed else None
+
+
 async def check_server_connection(session: AsyncSession, server: Server, timeout: float) -> ConnectionTestResult:
     """Test the server through its jump chain. Every saved server in the chain that logged in
-    and has no recorded host key gets the one it presented."""
+    and has no recorded host key gets the one it presented. A saved server remembers the result."""
     pairs = await build_hops(session, server)
     report = await run_connection_test([hop for _, hop in pairs], timeout)
     hops = []
     for (stored, _), outcome in zip(pairs, report.hops):
         if stored.id is not None and outcome.ok and stored.host_key is None and outcome.host_key:
             stored.host_key = outcome.host_key
+            stored.host_key_recorded_at = utcnow()
         hops.append(HopResult(server_id=stored.id, name=outcome.name, ok=outcome.ok,
                               fingerprint=outcome.fingerprint, reason=outcome.reason, message=outcome.message))
+    result = ConnectionTestResult(ok=report.ok, hostname=report.hostname, elapsed_ms=report.elapsed_ms, hops=hops)
+    if server.id is not None:
+        _remember_test(server, result)
     await session.commit()
-    return ConnectionTestResult(ok=report.ok, hostname=report.hostname, elapsed_ms=report.elapsed_ms, hops=hops)
+    return result
 
 
 async def accept_host_key(session: AsyncSession, server: Server, fingerprint: str, timeout: float) -> None:
@@ -101,4 +118,5 @@ async def accept_host_key(session: AsyncSession, server: Server, fingerprint: st
     if fingerprint_of(presented) != fingerprint:
         raise HostKeyMismatch
     server.host_key = presented
+    server.host_key_recorded_at = utcnow()
     await session.commit()
