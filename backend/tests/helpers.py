@@ -265,7 +265,8 @@ MODEL = "meta-llama/Llama-3.1-8B-Instruct"
 
 class FakeVLLM:
     """vLLM's endpoints on 127.0.0.1. /v1/models needs the API key, as with `--api-key`, and the
-    token counters grow by 100 on every read of /metrics."""
+    token counters grow by 100 on every read of /metrics. Like the servers seen in the field, it
+    keeps the connection open after a complete answer until the client hangs up."""
 
     def __init__(self) -> None:
         self._prompt_tokens = 5000
@@ -278,9 +279,19 @@ class FakeVLLM:
                 status, body = fake._answer(self.path, self.headers.get("Authorization"))
                 encoded = body.encode()
                 self.send_response(status)
-                self.send_header("Content-Length", str(len(encoded)))
-                self.end_headers()
-                self.wfile.write(encoded)
+                if self.path == "/metrics":
+                    # As uvicorn with httptools answers when the app gives no length: chunked, even to HTTP/1.0.
+                    self.send_header("Transfer-Encoding", "chunked")
+                    self.end_headers()
+                    half = len(encoded) // 2
+                    for part in (encoded[:half], encoded[half:], b""):
+                        self.wfile.write(b"%x\r\n%s\r\n" % (len(part), part))
+                else:
+                    self.send_header("Content-Length", str(len(encoded)))
+                    self.end_headers()
+                    self.wfile.write(encoded)
+                self.wfile.flush()
+                self.rfile.read(1)  # returns once the client closes its end
 
             def log_message(self, format: str, *args: object) -> None:
                 pass

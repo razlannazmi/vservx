@@ -43,6 +43,12 @@ def _chain(server: Server, servers: dict[int, Server]) -> list[Server] | None:
     return chain
 
 
+def _log_unexpected_end(server_id: int, task: asyncio.Task[None]) -> None:
+    """A watch that dies on an error nobody expected would otherwise freeze its server's page silently."""
+    if not task.cancelled() and (exc := task.exception()) is not None:
+        logger.error("Watching server %s stopped on an unexpected error", server_id, exc_info=exc)
+
+
 def _signature(server: Server, chain: list[Server], keys: dict[int, SavedKey]) -> str:
     """Changes when anything about reaching the server changes. Hashed, so no secret is kept around."""
     parts: list[object] = [server.sudo_password]
@@ -136,6 +142,8 @@ class Watcher:
         watch = ServerWatch(WatchConfig(server.id, hops, sudo_password), self._settings, self._limiter,
                             self._histories.setdefault(server.id, {}))
         task = asyncio.create_task(watch.run(), name=f"watch-server-{server.id}")
+        server_id = server.id
+        task.add_done_callback(lambda done: _log_unexpected_end(server_id, done))
         self._entries[server.id] = _Entry(WatchState.CHECKING, signature, watch, task)
 
     def _set_idle(self, server_id: int, state: WatchState) -> None:

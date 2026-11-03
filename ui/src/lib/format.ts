@@ -21,3 +21,25 @@ export function relativeTime(iso: string, now: Date = new Date()): string {
 export function localDateTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
+
+/** "4 s ago" for things read every few seconds, then as relativeTime. */
+export function secondsAgo(iso: string, now: Date = new Date()): string {
+  const ago = now.getTime() - new Date(iso).getTime();
+  return ago < MINUTE ? `${Math.max(0, Math.floor(ago / 1000))} s ago` : relativeTime(iso, now);
+}
+
+/** Local "HH:MM". */
+export function clockTime(iso: string): string {
+  const at = new Date(iso);
+  return `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+}
+
+/** How long since: "40 s", "2 min", "6 h", "3 days". */
+export function elapsed(iso: string, now: Date = new Date()): string {
+  const ago = Math.max(0, now.getTime() - new Date(iso).getTime());
+  if (ago < MINUTE) return `${Math.floor(ago / 1000)} s`;
+  if (ago < HOUR) return `${Math.floor(ago / MINUTE)} min`;
+  if (ago < DAY) return `${Math.floor(ago / HOUR)} h`;
+  const days = Math.floor(ago / DAY);
+  return `${days} ${days === 1 ? "day" : "days"}`;
+}

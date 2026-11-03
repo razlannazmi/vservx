@@ -1,11 +1,17 @@
 <script lang="ts">
-  import type { ServerRead } from "$lib/api/client";
+  import type { ServerRead, WatchSummaryRead } from "$lib/api/client";
   import { followLink } from "$lib/router.svelte";
-  import { serverStatus, TONE_DOT } from "$lib/servers";
+  import { TONE_DOT } from "$lib/servers";
+  import { cardStatus } from "$lib/watch";
 
-  let { server, href, selected }: { server: ServerRead; href: string; selected: boolean } = $props();
+  let {
+    server,
+    href,
+    selected,
+    summary,
+  }: { server: ServerRead; href: string; selected: boolean; summary?: WatchSummaryRead } = $props();
 
-  const status = $derived(serverStatus(server));
+  const status = $derived(cardStatus(server, summary));
 </script>
 
 <!-- The selected card is outlined in the text colour; hover lifts it a pixel (not under reduced motion). -->

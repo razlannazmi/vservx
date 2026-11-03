@@ -1,22 +1,30 @@
 <script lang="ts">
   import PlusIcon from "@lucide/svelte/icons/plus";
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import { fly } from "svelte/transition";
-  import { api, type SavedKeyRead, type ServerRead } from "$lib/api/client";
+  import { api, type SavedKeyRead, type ServerRead, type WatchSummaryRead } from "$lib/api/client";
   import ServerCard from "$lib/components/ServerCard.svelte";
   import ServerDetails from "$lib/components/ServerDetails.svelte";
   import ServerDialog from "$lib/components/ServerDialog.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { duration } from "$lib/motion";
   import { canOperate } from "$lib/permissions";
+  import { every } from "$lib/poll";
   import { navigate } from "$lib/router.svelte";
+  import { WATCH_POLL_MS } from "$lib/watch";
   import { leaveMissingWorkspace, type Workspace } from "$lib/workspaces.svelte";
 
-  let { workspace, serverId }: { workspace: Workspace; serverId: number | null } = $props();
+  let {
+    workspace,
+    serverId,
+    instance,
+  }: { workspace: Workspace; serverId: number | null; instance: string | null } = $props();
 
   let servers = $state<ServerRead[]>([]);
   let keys = $state<SavedKeyRead[]>([]);
   let loaded = $state(false);
+  // Each server's watch summary, for its card; asked for every 10 s while the tab is visible.
+  let summaries = $state.raw(new Map<number, WatchSummaryRead>());
   let dialogOpen = $state(false);
   let editing = $state<ServerRead | null>(null);
 
@@ -43,6 +51,24 @@
     loaded = true;
   }
 
+  $effect(() => {
+    const workspaceId = workspace.id;
+    return untrack(() => every(WATCH_POLL_MS, () => loadSummaries(workspaceId)));
+  });
+
+  async function loadSummaries(workspaceId: number = workspace.id) {
+    const { data } = await api.GET("/api/workspaces/{workspace_id}/watch", {
+      params: { path: { workspace_id: workspaceId } },
+    });
+    if (data) summaries = new Map(data.map((each) => [each.server_id, each]));
+  }
+
+  // Saving, deleting or testing a server changes what's watched: the cards catch up straight away.
+  async function changed() {
+    await load();
+    await loadSummaries();
+  }
+
   // Nothing chosen: the first card. A server that's gone: back to the workspace.
   $effect(() => {
     if (!loaded) return;
@@ -62,12 +88,12 @@
   }
 
   async function saved(server: ServerRead) {
-    await load();
+    await changed();
     navigate(`${base}/servers/${server.id}`);
   }
 
   async function deleted() {
-    await load();
+    await changed();
     navigate(base, { replace: true });
   }
 </script>
@@ -75,7 +101,14 @@
 {#snippet cards(list: ServerRead[])}
   <ul class="space-y-2">
     {#each list as server (server.id)}
-      <li><ServerCard {server} href={`${base}/servers/${server.id}`} selected={server.id === serverId} /></li>
+      <li>
+        <ServerCard
+          {server}
+          href={`${base}/servers/${server.id}`}
+          selected={server.id === serverId}
+          summary={summaries.get(server.id)}
+        />
+      </li>
     {/each}
   </ul>
 {/snippet}
@@ -110,7 +143,17 @@
     {:else if selected}
       {#key selected.id}
         <div in:fly={{ y: 8, duration: duration(200) }}>
-          <ServerDetails workspaceId={workspace.id} server={selected} {servers} {keys} {operator} onEdit={edit} onChanged={load} />
+          <ServerDetails
+            workspaceId={workspace.id}
+            server={selected}
+            {servers}
+            {keys}
+            {operator}
+            onEdit={edit}
+            onChanged={changed}
+            {instance}
+            {base}
+          />
         </div>
       {/key}
     {/if}

@@ -2,6 +2,7 @@
 reading their health and usage, and the GPUs, every round."""
 
 import asyncio
+import logging
 import random
 from collections import Counter
 from contextlib import AsyncExitStack
@@ -30,6 +31,8 @@ from api.watch.gpus import GPU_COMMAND, Gpu, gpu_users, parse_gpus
 from api.watch.shell import CantReachPort, PortClosed, Shell
 from api.watch.states import Probe, instance_state
 from api.watch.usage import UsageHistory, UsagePoint
+
+logger = logging.getLogger(__name__)
 
 # Waits before reconnecting: doubling from the first to the last.
 RECONNECT_FIRST = 10.0
@@ -65,6 +68,8 @@ class _Instance:
     ever_ready: bool = False
     info: InstanceInfo | None = None
     message: str | None = None
+    # What last went wrong reading it, as logged; None while it reads fine.
+    problem: str | None = None
 
 
 def usage_read(point: UsagePoint) -> UsagePointRead:
@@ -241,16 +246,20 @@ class ServerWatch:
         async def get(path: str, headers: dict[str, str]) -> HttpResponse:
             return await shell.http_get(host, port, path, headers)
 
-        message = None
+        health_path = instance.framework.health_path
+        message = problem = None
         try:
-            health = await get(instance.framework.health_path, {})
+            health = await get(health_path, {})
             probe = Probe.HEALTHY if health.status == 200 else Probe.UNHEALTHY
-        except PortClosed:
-            probe = Probe.PORT_CLOSED
+            if probe is Probe.UNHEALTHY:
+                problem = f"GET {health_path} on {host}:{port} answered {health.status or 'without an HTTP status line'}"
+        except PortClosed as exc:
+            probe, problem = Probe.PORT_CLOSED, f"nothing accepts connections on {host}:{port} ({exc})"
         except CantReachPort as exc:
             probe, message = Probe.CANT_REACH, str(exc)
-        except TimeoutError:
-            probe = Probe.UNHEALTHY
+            problem = message
+        except TimeoutError as exc:
+            probe, problem = Probe.UNHEALTHY, str(exc) or f"GET {health_path} on {host}:{port} timed out"
         was_ready = instance.state is InstanceState.READY
         if probe is Probe.HEALTHY:
             instance.ever_ready = True
@@ -261,13 +270,29 @@ class ServerWatch:
                 if metrics.status == 200:
                     history = self._histories.setdefault(instance.container.name, UsageHistory(self._history_length))
                     history.add(instance.framework.read_metrics(metrics.body), utcnow())
-            except (PortClosed, CantReachPort, TimeoutError):
-                pass  # a hiccup between the health check and the metrics; next round reads them
+                else:
+                    problem = f"GET {instance.framework.metrics_path} answered {metrics.status}"
+            except (PortClosed, CantReachPort, TimeoutError) as exc:
+                # A hiccup between the health check and the metrics; the next round reads them.
+                problem = f"couldn't read usage: {exc or type(exc).__name__}"
         instance.state = instance_state(instance.container, probe, instance.ever_ready)
         instance.message = message
+        self._log_problem(instance, problem)
         if was_ready and instance.state is not InstanceState.READY:
             # It may have stopped: see what Docker says at the next round, not in a minute.
             self._discovery_due = True
+
+    def _log_problem(self, instance: _Instance, problem: str | None) -> None:
+        """Say what went wrong reading an instance, once each time that changes, so a log isn't
+        flooded every round."""
+        if problem == instance.problem:
+            return
+        name = instance.container.name
+        if problem is not None:
+            logger.warning("Server %s, instance %s (%s): %s", self.config.server_id, name, instance.state, problem)
+        else:
+            logger.warning("Server %s, instance %s: reading it again", self.config.server_id, name)
+        instance.problem = problem
 
     async def _read_gpus(self, shell: Shell, retry: bool) -> None:
         # A server without nvidia-smi is asked again only when instances are looked for.

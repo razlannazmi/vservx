@@ -1,7 +1,9 @@
 import { expect, test } from "vitest";
-import { classifyResponse, type ServerRead } from "./api/client";
+import { classifyResponse, type ServerRead, type WatchedInstanceRead, type WatchSummaryRead } from "./api/client";
+import { clockTime } from "./format";
 import { serverStatus } from "./servers";
 import { slugify, withSlugs } from "./slug";
+import { cardStatus, gpuLabel, instanceReason } from "./watch";
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -48,4 +50,41 @@ test("repeated names get a number, oldest first", () => {
     { id: 5, name: "homelab 2" },
   ];
   expect(withSlugs(list).map((each) => each.slug)).toEqual(["homelab-3", "homelab", "homelab-2"]);
+});
+
+const now = new Date("2026-11-01T12:00:00Z");
+const server = { id: 1, name: "gpu-7", jump_only: false, last_test: null } as unknown as ServerRead;
+const sum = (state: string, counts = {}, docker = "plain", since: string | null = null) =>
+  ({ server_id: 1, state, since, docker, counts }) as unknown as WatchSummaryRead;
+
+test("card status follows watching", () => {
+  expect(cardStatus(server, sum("not_tested"))).toEqual({ tone: "none", label: "not tested yet" });
+  expect(cardStatus(server, sum("connected"))).toEqual({ tone: "ok", label: "no instances" });
+  expect(cardStatus(server, sum("connected", { ready: 3, crashed: 1, starting: 1 }))).toEqual({
+    tone: "bad",
+    label: "5 instances · 1 crashed · 1 starting",
+  });
+  expect(cardStatus(server, sum("connected", { ready: 1, restarting: 1 })).tone).toBe("warn");
+  expect(cardStatus(server, sum("connected", { ready: 1 }, "needs_sudo_password"))).toEqual({
+    tone: "warn",
+    label: "needs sudo password",
+  });
+  const since = "2026-11-01T11:02:00Z";
+  expect(cardStatus(server, sum("unreachable", {}, "unknown", since)).label).toBe(`unreachable · since ${clockTime(since)}`);
+  expect(cardStatus(server, undefined)).toEqual(serverStatus(server));
+});
+
+test("a stopped instance says why", () => {
+  const crashed = {
+    state: "crashed",
+    exit_code: 137,
+    oom_killed: false,
+    restart_count: 4,
+    finished_at: "2026-11-01T10:00:00Z",
+  } as unknown as WatchedInstanceRead;
+  expect(instanceReason(crashed, now)).toBe(
+    "Exited with code 137 · 2 h ago. Code 137 means the container was killed, often because it ran out of memory." +
+      " Docker restarted it 4 times.",
+  );
+  expect(gpuLabel(["0", "1", "2", "3"])).toBe("0–3");
 });

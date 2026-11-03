@@ -88,7 +88,7 @@
         {:else if "workspaceSlug" in route}
           {#if workspace}
             {#if route.name === "servers"}
-              <Servers {workspace} serverId={route.serverId} />
+              <Servers {workspace} serverId={route.serverId} instance={route.instance} />
             {:else if route.name === "keys"}
               <Keys {workspace} />
             {:else if route.name === "members"}
