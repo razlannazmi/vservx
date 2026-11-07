@@ -27,6 +27,21 @@ from api.watch.watcher import Watcher
 
 logger = logging.getLogger(__name__)
 
+# On every response. No page of vservx is meant to be shown inside another site's frame.
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "same-origin",
+}
+# Only on the web app's own files, since /docs loads Swagger UI from a CDN. The built app loads
+# everything from vservx itself; inline styles stay allowed because Svelte and bits-ui set style
+# attributes.
+_APP_CSP = (
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
+    "font-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; "
+    "frame-ancestors 'none'"
+)
+
 
 async def _warn_if_secrets_unreadable(engine: AsyncEngine) -> None:
     """A new key with secrets already stored means the old key file was lost."""
@@ -127,6 +142,13 @@ def create_app() -> FastAPI:
             request.app.state.watcher.reload()
         return response
 
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+        response = await call_next(request)
+        for name, value in _SECURITY_HEADERS.items():
+            response.headers.setdefault(name, value)
+        return response
+
     app.include_router(api_router)
 
     if (settings.ui_dir / "index.html").is_file():
@@ -159,9 +181,9 @@ def _serve_app_files(app: FastAPI, ui_dir: Path) -> None:
         # Files directly in the build folder (favicon.svg); resolve() so "..\" can't climb out.
         file = (root / path).resolve()
         if path and file.parent == root and file.is_file():
-            return FileResponse(file)
+            return FileResponse(file, headers={"Content-Security-Policy": _APP_CSP})
         # Every other path is a page of the app, so links into it work on refresh.
-        return FileResponse(index, headers={"Cache-Control": "no-cache"})
+        return FileResponse(index, headers={"Cache-Control": "no-cache", "Content-Security-Policy": _APP_CSP})
 
 
 app = create_app()

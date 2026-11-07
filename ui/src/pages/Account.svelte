@@ -5,9 +5,11 @@
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import { Label } from "$lib/components/ui/label/index.js";
-  import { session } from "$lib/session.svelte";
+  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import { session, signOutEverywhere } from "$lib/session.svelte";
 
   let name = $state("");
+  let confirmSignOutEverywhere = $state(false);
   let renaming = $state(false);
   let currentPassword = $state("");
   let newPassword = $state("");
@@ -91,5 +93,24 @@
         <Button type="submit" disabled={changingPassword}>Change password</Button>
       </form>
     </section>
+
+    <section class="space-y-4 rounded-xl border bg-card p-5" aria-labelledby="account-sessions">
+      <div class="space-y-1.5">
+        <h2 id="account-sessions" class="font-medium">Sessions</h2>
+        <p class="text-sm text-muted-foreground">
+          Signs out every browser and stops every API token of yours, this one included. Use it if a
+          device was lost or a token was shared.
+        </p>
+      </div>
+      <Button variant="outline" onclick={() => (confirmSignOutEverywhere = true)}>Sign out everywhere</Button>
+    </section>
   </div>
 </div>
+
+<ConfirmDialog
+  bind:open={confirmSignOutEverywhere}
+  title="Sign out everywhere?"
+  message="Every browser and API token of yours is signed out, including this one. You'll need your email and password to sign in again."
+  confirmLabel="Sign out everywhere"
+  onConfirm={signOutEverywhere}
+/>

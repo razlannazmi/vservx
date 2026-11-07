@@ -79,12 +79,18 @@ def test_app_files_served(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("VSERVX_UI_DIR", str(ui))
     get_settings.cache_clear()
     with TestClient(create_app()) as client:
-        assert "<title>vservx</title>" in client.get("/").text
+        page = client.get("/")
+        assert "<title>vservx</title>" in page.text
+        assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
+        assert page.headers["x-frame-options"] == "DENY"
         # A link into the app works on refresh.
         assert "<title>vservx</title>" in client.get("/workspaces/homelab/servers/2").text
         assert client.get("/assets/app.js").text == "console.log(1)"
         missing = client.get("/api/nope")
         assert missing.status_code == 404 and missing.headers["content-type"].startswith("application/json")
+        assert missing.headers["x-content-type-options"] == "nosniff"
+        # /docs loads Swagger UI from a CDN, so the app's policy stays off it.
+        assert "content-security-policy" not in client.get("/docs").headers
 
 
 # --- Sign-up and accounts
@@ -150,3 +156,12 @@ def test_change_own_name_and_password(client: TestClient, add_user: Callable[...
     new_token = client.post(f"{ME}/password", json=body, headers=old).json()["access_token"]
     assert client.get(ME, headers=old).status_code == 401
     assert client.get(ME, headers={"Authorization": f"Bearer {new_token}"}).status_code == 200
+
+
+def test_logout_everywhere_revokes_every_token(client: TestClient, add_user: Callable[..., None]) -> None:
+    add_user("ada@example.com")
+    copied = login_headers(client, "ada@example.com", USER_PASSWORD)
+    assert client.get(ME).status_code == 200  # this browser's cookie
+    assert client.post("/api/auth/logout-everywhere", headers={"X-Vservx": "1"}).status_code == 204
+    assert client.get(ME).status_code == 401
+    assert client.get(ME, headers=copied).status_code == 401

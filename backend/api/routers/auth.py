@@ -55,6 +55,15 @@ async def logout(request: Request, response: Response) -> None:
     clear_session_cookie(response, request)
 
 
+@router.post("/logout-everywhere", status_code=status.HTTP_204_NO_CONTENT, dependencies=_current_database)
+async def logout_everywhere(user: CurrentUserDep, request: Request, response: Response, session: SessionDep) -> None:
+    """Sign out every browser and revoke every bearer token of this account, this one included.
+    For a token that may have been copied: logging out only forgets this browser's cookie."""
+    revoke_tokens(user)
+    await session.commit()
+    clear_session_cookie(response, request)
+
+
 @router.post("/signup", status_code=status.HTTP_202_ACCEPTED, dependencies=_current_database)
 async def sign_up(data: SignupRequest, session: SessionDep) -> dict[str, str]:
     """Ask for an account. It can't sign in until an app admin approves it."""

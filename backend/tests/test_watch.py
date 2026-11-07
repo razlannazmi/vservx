@@ -17,7 +17,7 @@ from api.schemas.watch import GpuRead, GpuTotalsRead, ServerCountsRead, ServerWa
 from api.watch.gpus import gpu_users, parse_gpus
 from api.watch.overview import workspace_overview
 from api.watch.server import ServerWatch, WatchConfig
-from api.watch.shell import CommandResult
+from api.watch.shell import CommandResult, _AnswerProgress, _response
 from api.watch.states import Probe, instance_state
 from api.watch.usage import UsageHistory
 from api.watch.vllm import VLLM
@@ -132,6 +132,23 @@ def test_counter_reset_skips_interval() -> None:
     assert after.ttft_seconds == pytest.approx(0.15)
     history.add(_sample(240, 110, 0.4, 3), T0 + timedelta(seconds=30))
     assert len(history.points) == 3
+
+
+@pytest.mark.parametrize("answer", [
+    b"HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhello",
+    b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n3\r\nhel\r\n2;ext=1\r\nlo\r\n0\r\n\r\n",
+])
+def test_http_answer_complete_once_all_in(answer: bytes) -> None:
+    # However the answer is split across reads, it's complete exactly when the whole body is in.
+    for read_size in (1, 7, len(answer)):
+        progress, raw, done = _AnswerProgress(), bytearray(), False
+        for at in range(0, len(answer), read_size):
+            raw += answer[at:at + read_size]
+            if done := progress.complete(raw):
+                break
+        assert done and _response(bytes(raw)).body == "hello", read_size
+    # Neither a length nor chunks: it ends only when the connection closes.
+    assert not _AnswerProgress().complete(bytearray(b"HTTP/1.0 200 OK\r\n\r\nhello"))
 
 
 def _view(state: WatchState, docker: DockerStatus = DockerStatus.PLAIN, instances=(), gpus=None) -> ServerWatchRead:

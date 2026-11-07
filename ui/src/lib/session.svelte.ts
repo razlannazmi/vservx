@@ -1,6 +1,6 @@
 /** Who is signed in, and whether the database lets anyone in at all. */
 
-import { api, onApiSignal, type UserRead } from "$lib/api/client";
+import { api, errorMessage, onApiSignal, type UserRead } from "$lib/api/client";
 import { navigate, router } from "$lib/router.svelte";
 
 export type DatabaseView = "current" | "upgrade_required" | "newer_than_app";
@@ -67,6 +67,14 @@ export async function signIn(email: string, password: string): Promise<{ ok: tru
 export async function signOut(): Promise<void> {
   await api.POST("/api/auth/logout");
   // A full reload, so nothing of this account stays in memory for the next one.
+  location.replace("/sign-in");
+}
+
+/** Sign out every browser and revoke every token of this account, this one included. Throws the
+ * words to show when it fails. */
+export async function signOutEverywhere(): Promise<void> {
+  const { error } = await api.POST("/api/auth/logout-everywhere");
+  if (error) throw new Error(errorMessage(error, "Couldn't sign out everywhere"));
   location.replace("/sign-in");
 }
 
