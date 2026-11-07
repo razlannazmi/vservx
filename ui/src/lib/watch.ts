@@ -1,11 +1,21 @@
 /** What watching a server shows: card lines, instance words and tones, and the numbers' formats. */
 
-import type { DockerStatus, InstanceState, ServerRead, WatchedInstanceRead, WatchSummaryRead } from "$lib/api/client";
+import type {
+  DockerStatus,
+  GpuRead,
+  InstanceState,
+  ServerRead,
+  WatchedInstanceRead,
+  WatchSummaryRead,
+} from "$lib/api/client";
 import { clockTime, elapsed, relativeTime } from "$lib/format";
 import { serverStatus, type Tone } from "$lib/servers";
 
-/** The page asks for the cards and the open server this often (the backend reads usage every 10 s). */
-export const WATCH_POLL_MS = 10_000;
+/** The page asks for the cards and the open server this often (the backend reads usage every 5 s). */
+export const WATCH_POLL_MS = 5_000;
+
+/** Minutes of usage the charts show; matches the backend's `history_minutes` default. */
+export const HISTORY_MINUTES = 30;
 
 export const INSTANCE_WORDS: Record<InstanceState, string> = {
   ready: "Ready",
@@ -29,14 +39,17 @@ export const INSTANCE_TONE: Record<InstanceState, Tone> = {
   unreachable: "warn",
 };
 
-// The card line's suffixes, in this order, each only when there's at least one.
-const SUFFIXES: [InstanceState, string][] = [
+// The card line is narrow and truncates, so problems come first, before the total, in this order.
+const PROBLEMS: [InstanceState, string][] = [
   ["crashed", "crashed"],
   ["not_responding", "not responding"],
   ["restarting", "restarting"],
   ["unreachable", "can't reach"],
+];
+
+// After the total, each only when there's at least one. Stopped ones aren't on the card: they need nothing.
+const OTHERS: [InstanceState, string][] = [
   ["starting", "starting"],
-  ["stopped", "stopped"],
   ["paused", "paused"],
 ];
 
@@ -75,8 +88,9 @@ export function cardStatus(server: ServerRead, summary: WatchSummaryRead | undef
   const count = (state: InstanceState) => counts[state] ?? 0;
   const total = Object.values(counts).reduce<number>((sum, each) => sum + (each ?? 0), 0);
   if (total === 0) return { tone: "ok", label: "no instances" };
-  const parts = [total === 1 ? "1 instance" : `${total} instances`];
-  for (const [state, words] of SUFFIXES) if (count(state) > 0) parts.push(`${count(state)} ${words}`);
+  const listed = (states: [InstanceState, string][]) =>
+    states.filter(([state]) => count(state) > 0).map(([state, words]) => `${count(state)} ${words}`);
+  const parts = [...listed(PROBLEMS), total === 1 ? "1 instance" : `${total} instances`, ...listed(OTHERS)];
   const tone: Tone =
     count("crashed") + count("not_responding") > 0 ? "bad" : count("restarting") + count("unreachable") > 0 ? "warn" : "ok";
   return { tone, label: parts.join(" · ") };
@@ -137,6 +151,53 @@ export function shortModel(model: string | null): string {
   return model ? (model.split("/").at(-1) ?? model) : "—";
 }
 
+/** Long instance lists get a search box and these chips; above this many rows. */
+export const INSTANCE_FILTER_FROM = 7;
+
+export type InstanceFilter = "all" | "ready" | "attention" | "stopped";
+
+export const INSTANCE_FILTERS: [InstanceFilter, string][] = [
+  ["all", "All"],
+  ["ready", "Ready"],
+  ["attention", "Needs attention"],
+  ["stopped", "Stopped"],
+];
+
+/** Whether an instance belongs under a chip; "needs attention" is anything shown amber or red. */
+export function matchesFilter(instance: Pick<WatchedInstanceRead, "state">, filter: InstanceFilter): boolean {
+  switch (filter) {
+    case "all":
+      return true;
+    case "ready":
+    case "stopped":
+      return instance.state === filter;
+    case "attention": {
+      const tone = INSTANCE_TONE[instance.state];
+      return tone === "bad" || tone === "warn";
+    }
+  }
+}
+
+/** Every word of the search appears in the container's name, model, or port. */
+export function matchesQuery(instance: Pick<WatchedInstanceRead, "name" | "model" | "port">, query: string): boolean {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const text = `${instance.name} ${instance.model ?? ""} ${instance.port}`.toLowerCase();
+  return words.every((word) => text.includes(word));
+}
+
+/** The instances whose state differs from the last poll's; new names and missing ones don't count. */
+export function changedStates(
+  last: ReadonlyMap<string, InstanceState>,
+  instances: Pick<WatchedInstanceRead, "name" | "state">[],
+): string[] {
+  return instances
+    .filter((each) => {
+      const before = last.get(each.name);
+      return before !== undefined && before !== each.state;
+    })
+    .map((each) => each.name);
+}
+
 /** "all", "0–3", "0, 1, 5", or "—" when Docker didn't say. */
 export function gpuLabel(gpus: string[] | null): string {
   if (!gpus || gpus.length === 0) return "—";
@@ -153,6 +214,13 @@ export function gpuLabel(gpus: string[] | null): string {
     start = end + 1;
   }
   return parts.join(", ");
+}
+
+/** How full a GPU's memory is, 0–100; null when nvidia-smi didn't say. */
+export function gpuMemoryPercent(gpu: Pick<GpuRead, "memory_used_mib" | "memory_total_mib">): number | null {
+  const { memory_used_mib: used, memory_total_mib: total } = gpu;
+  if (used === null || total === null || total <= 0) return null;
+  return Math.min(Math.max((used / total) * 100, 0), 100);
 }
 
 export function formatNumber(value: number | null | undefined, digits = 0): string {

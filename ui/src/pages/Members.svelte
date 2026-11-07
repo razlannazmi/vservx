@@ -11,7 +11,7 @@
   import { Button } from "$lib/components/ui/button/index.js";
   import * as Select from "$lib/components/ui/select/index.js";
   import * as Table from "$lib/components/ui/table/index.js";
-  import { duration } from "$lib/motion";
+  import { duration, easeOut } from "$lib/motion";
   import { isOwner, ROLE_COVERAGE, ROLE_NAMES } from "$lib/permissions";
   import { session } from "$lib/session.svelte";
   import { leaveMissingWorkspace } from "$lib/workspaces.svelte";
@@ -131,11 +131,11 @@
                   class={`flex w-full items-center justify-between gap-2 px-4 py-3 text-left font-medium outline-none
                     hover:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring ${showRoles ? "rounded-t-xl" : "rounded-xl"}`}>
             What each role can do
-            <ChevronDownIcon class={`size-4 text-muted-foreground transition-transform duration-200 ${showRoles ? "rotate-180" : ""}`} />
+            <ChevronDownIcon class={`size-4 text-muted-foreground transition-transform duration-200 ease-out ${showRoles ? "rotate-180" : ""}`} />
           </button>
         </h2>
         {#if showRoles}
-          <div id="members-roles-table" class="border-t" transition:slide={{ duration: duration(200) }}>
+          <div id="members-roles-table" class="border-t" transition:slide={{ duration: duration(200), easing: easeOut }}>
             <Table.Root>
               <Table.Header>
                 <Table.Row>

@@ -7,7 +7,7 @@
   import ServerDetails from "$lib/components/ServerDetails.svelte";
   import ServerDialog from "$lib/components/ServerDialog.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
-  import { duration } from "$lib/motion";
+  import { duration, easeOut } from "$lib/motion";
   import { canOperate } from "$lib/permissions";
   import { every } from "$lib/poll";
   import { navigate } from "$lib/router.svelte";
@@ -23,7 +23,7 @@
   let servers = $state<ServerRead[]>([]);
   let keys = $state<SavedKeyRead[]>([]);
   let loaded = $state(false);
-  // Each server's watch summary, for its card; asked for every 10 s while the tab is visible.
+  // Each server's watch summary, for its card; asked for every 5 s while the tab is visible.
   let summaries = $state.raw(new Map<number, WatchSummaryRead>());
   let dialogOpen = $state(false);
   let editing = $state<ServerRead | null>(null);
@@ -118,7 +118,7 @@
     <div class="space-y-2">
       <h1 class="truncate text-lg font-semibold tracking-tight" title={workspace.name}>{workspace.name}</h1>
       {#if operator}
-        <Button size="sm" class="w-full" onclick={add}><PlusIcon /> Add server</Button>
+        <Button size="sm" variant="outline" class="w-full" onclick={add}><PlusIcon /> Add server</Button>
       {/if}
     </div>
     {#if regular.length > 0}
@@ -130,7 +130,8 @@
     {/if}
   </aside>
 
-  <section class="min-w-0 flex-1 overflow-y-auto" aria-label="Server details">
+  <!-- The 8px gutter keeps focus rings at the edges from being clipped by the scrolling, without narrowing the content. -->
+  <section class="-mx-2 min-w-0 flex-1 overflow-y-auto px-2" aria-label="Server details">
     {#if loaded && servers.length === 0}
       <div class="flex h-full flex-col items-center justify-center gap-3 rounded-xl border border-dashed p-8 text-center">
         <h2 class="text-lg font-semibold tracking-tight">No servers yet</h2>
@@ -142,7 +143,7 @@
       </div>
     {:else if selected}
       {#key selected.id}
-        <div in:fly={{ y: 8, duration: duration(200) }}>
+        <div in:fly={{ y: 8, duration: duration(200), easing: easeOut }}>
           <ServerDetails
             workspaceId={workspace.id}
             server={selected}

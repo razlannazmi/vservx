@@ -32,9 +32,9 @@ class Settings(BaseSettings):
     # SSH connection each. Usage and GPUs are read every usage interval; containers are looked
     # for every discovery interval. History stays in memory only.
     watch_enabled: bool = True
-    usage_interval_seconds: float = 10.0
+    usage_interval_seconds: float = 5.0
     discovery_interval_seconds: float = 60.0
-    history_minutes: int = 15
+    history_minutes: int = 30
     # Most servers doing SSH work at the same moment.
     watch_concurrency: int = 8
 

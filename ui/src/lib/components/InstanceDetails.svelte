@@ -3,25 +3,26 @@
   import { fly } from "svelte/transition";
   import { api, type UsagePointRead, type WatchedInstanceRead } from "$lib/api/client";
   import UsageChart from "$lib/components/UsageChart.svelte";
-  import { duration } from "$lib/motion";
+  import { duration, easeOut } from "$lib/motion";
   import { TONE_DOT } from "$lib/servers";
   import {
     formatNumber,
     formatSeconds,
+    HISTORY_MINUTES,
     INSTANCE_TONE,
     INSTANCE_WORDS,
     instanceReason,
     instanceSince,
   } from "$lib/watch";
 
-  // The selected instance: what it runs, how long it's been in its state, and 15 minutes of usage.
+  // The selected instance: what it runs, how long it's been in its state, and its recent usage.
   let { workspaceId, serverId, instance }: { workspaceId: number; serverId: number; instance: WatchedInstanceRead } =
     $props();
 
-  const HISTORY_SECONDS = 15 * 60;
+  const HISTORY_SECONDS = HISTORY_MINUTES * 60;
 
   let points = $state.raw<UsagePointRead[]>([]);
-  // How many readings 15 minutes hold, from the history's interval.
+  // How many readings the history window holds, from the history's interval.
   let cap = 90;
 
   const percent = (value: number) => `${formatNumber(value)}%`;
@@ -58,7 +59,7 @@
 </script>
 
 {#key instance.name}
-  <div class="space-y-3" in:fly={{ y: 8, duration: duration(200) }}>
+  <div class="space-y-3" in:fly={{ y: 8, duration: duration(200), easing: easeOut }}>
     <p class="flex items-center gap-1.5 text-sm">
       <span
         class="size-2 shrink-0 rounded-full {TONE_DOT[INSTANCE_TONE[instance.state]]}
@@ -76,7 +77,7 @@
     </p>
 
     {#if instance.state === "ready"}
-      <div class="grid gap-3 sm:grid-cols-2">
+      <div class="grid gap-x-6 gap-y-5 sm:grid-cols-2">
         <UsageChart
           title="Requests"
           {points}

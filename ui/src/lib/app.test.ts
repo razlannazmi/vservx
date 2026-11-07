@@ -1,9 +1,24 @@
 import { expect, test } from "vitest";
-import { classifyResponse, type ServerRead, type WatchedInstanceRead, type WatchSummaryRead } from "./api/client";
+import {
+  classifyResponse,
+  type InstanceState,
+  type ServerRead,
+  type WatchedInstanceRead,
+  type WatchSummaryRead,
+} from "./api/client";
 import { clockTime } from "./format";
+import { easeInOut, easeOut } from "./motion";
 import { serverStatus } from "./servers";
 import { slugify, withSlugs } from "./slug";
-import { cardStatus, gpuLabel, instanceReason } from "./watch";
+import {
+  cardStatus,
+  changedStates,
+  gpuLabel,
+  gpuMemoryPercent,
+  instanceReason,
+  matchesFilter,
+  matchesQuery,
+} from "./watch";
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -62,8 +77,13 @@ test("card status follows watching", () => {
   expect(cardStatus(server, sum("connected"))).toEqual({ tone: "ok", label: "no instances" });
   expect(cardStatus(server, sum("connected", { ready: 3, crashed: 1, starting: 1 }))).toEqual({
     tone: "bad",
-    label: "5 instances · 1 crashed · 1 starting",
+    label: "1 crashed · 5 instances · 1 starting",
   });
+  // Problems lead (the card truncates), and stopped containers count in the total but aren't listed.
+  expect(
+    cardStatus(server, sum("connected", { ready: 8, crashed: 1, not_responding: 1, starting: 1, stopped: 3 })).label,
+  ).toBe("1 crashed · 1 not responding · 14 instances · 1 starting");
+  expect(cardStatus(server, sum("connected", { ready: 2, stopped: 2 }))).toEqual({ tone: "ok", label: "4 instances" });
   expect(cardStatus(server, sum("connected", { ready: 1, restarting: 1 })).tone).toBe("warn");
   expect(cardStatus(server, sum("connected", { ready: 1 }, "needs_sudo_password"))).toEqual({
     tone: "warn",
@@ -87,4 +107,52 @@ test("a stopped instance says why", () => {
       " Docker restarted it 4 times.",
   );
   expect(gpuLabel(["0", "1", "2", "3"])).toBe("0–3");
+});
+
+test("a GPU's bar follows its memory, not its compute", () => {
+  // vLLM holds 43 of 45 GB while idle: the bar should be nearly full even at 0% compute.
+  expect(gpuMemoryPercent({ memory_used_mib: 43 * 1024, memory_total_mib: 45 * 1024 })).toBeCloseTo(95.6, 1);
+  expect(gpuMemoryPercent({ memory_used_mib: null, memory_total_mib: 45 * 1024 })).toBeNull();
+  expect(gpuMemoryPercent({ memory_used_mib: 0, memory_total_mib: 0 })).toBeNull();
+});
+
+test("long instance lists filter by state chip and search words", () => {
+  const instance = (name: string, state: WatchedInstanceRead["state"], model: string | null = null, port = 8000) =>
+    ({ name, state, model, port }) as WatchedInstanceRead;
+  expect(matchesFilter(instance("a", "crashed"), "attention")).toBe(true);
+  expect(matchesFilter(instance("a", "unreachable"), "attention")).toBe(true);
+  expect(matchesFilter(instance("a", "starting"), "attention")).toBe(false);
+  expect(matchesFilter(instance("a", "stopped"), "stopped")).toBe(true);
+  expect(matchesFilter(instance("a", "ready"), "stopped")).toBe(false);
+  expect(matchesFilter(instance("a", "paused"), "all")).toBe(true);
+
+  const qwen = instance("vllm-qwen", "ready", "Qwen/Qwen2.5-72B-Instruct", 8003);
+  expect(matchesQuery(qwen, "")).toBe(true);
+  expect(matchesQuery(qwen, "QWEN 72b")).toBe(true);
+  expect(matchesQuery(qwen, "8003")).toBe(true);
+  expect(matchesQuery(qwen, "llama")).toBe(false);
+});
+
+test("motion curves match their CSS cubic-beziers", () => {
+  expect(easeOut(0)).toBe(0);
+  expect(easeOut(1)).toBe(1);
+  expect(easeOut(0.25)).toBeCloseTo(0.7754, 3);
+  expect(easeOut(0.5)).toBeCloseTo(0.966, 3);
+  expect(easeInOut(0.25)).toBeCloseTo(0.0529, 3);
+  expect(easeInOut(0.5)).toBeCloseTo(0.596, 3);
+  expect(easeInOut(0.75)).toBeCloseTo(0.9563, 3);
+});
+
+test("only an instance whose state changed since the last poll flashes", () => {
+  const last = new Map<string, InstanceState>([
+    ["a", "ready"],
+    ["b", "ready"],
+  ]);
+  const now = [
+    { name: "a", state: "crashed" as const },
+    { name: "b", state: "ready" as const },
+    { name: "c", state: "starting" as const },
+  ];
+  expect(changedStates(last, now)).toEqual(["a"]);
+  expect(changedStates(new Map(), now)).toEqual([]);
 });

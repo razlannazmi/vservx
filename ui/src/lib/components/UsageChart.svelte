@@ -2,10 +2,12 @@
   import type { UsagePointRead } from "$lib/api/client";
   import { linePath, niceMax, yFor, type Point } from "$lib/chart";
   import { clockTime } from "$lib/format";
+  import { HISTORY_MINUTES } from "$lib/watch";
 
   type Pick = (point: UsagePointRead) => number | null;
 
-  // One series (or two, the second dashed and lighter) over the last 15 minutes, in the text colour.
+  // One series (or two, the second dashed and lighter) over the last HISTORY_MINUTES, in the text colour.
+  // Its section says "last N min", so the chart only labels its top value.
   let {
     title,
     points,
@@ -26,7 +28,7 @@
 
   const WIDTH = 300;
   const HEIGHT = 78;
-  const WINDOW_MS = 15 * 60_000;
+  const WINDOW_MS = HISTORY_MINUTES * 60_000;
 
   // The newest reading sits at the right edge ("now"); points are placed by time, so gaps show.
   const end = $derived(points.length > 0 ? Date.parse(points[points.length - 1].at) : Date.now());
@@ -81,7 +83,7 @@
   }
 </script>
 
-<figure class="min-w-0 rounded-md border px-2.5 pt-2 pb-1.5">
+<figure class="min-w-0">
   <figcaption class="flex items-baseline justify-between gap-2 text-xs text-muted-foreground">
     <span>{title}</span>
     {#if legend}
@@ -98,7 +100,7 @@
   <div
     class="relative mt-1 text-foreground"
     role="img"
-    aria-label="{title}, last 15 minutes"
+    aria-label="{title}, last {HISTORY_MINUTES} minutes"
     onpointermove={track}
     onpointerleave={() => (hover = null)}
   >
@@ -159,7 +161,5 @@
       </div>
     {/if}
   </div>
-  <div class="flex justify-between text-[10px] text-muted-foreground tabular-nums">
-    <span>15 min ago</span><span>max {format(top)}</span><span>now</span>
-  </div>
+  <div class="text-right text-[10px] text-muted-foreground tabular-nums">max {format(top)}</div>
 </figure>

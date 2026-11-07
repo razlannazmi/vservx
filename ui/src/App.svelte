@@ -5,7 +5,7 @@
   import AppShell from "$lib/components/AppShell.svelte";
   import { Toaster } from "$lib/components/ui/sonner/index.js";
   import { navigate, router } from "$lib/router.svelte";
-  import { duration } from "$lib/motion";
+  import { duration, easeOut } from "$lib/motion";
   import { guardRoute, loadSession, session } from "$lib/session.svelte";
   import { loadWorkspaces, workspaceBySlug, workspaces } from "$lib/workspaces.svelte";
   import DatabaseNotice from "./pages/DatabaseNotice.svelte";
@@ -80,7 +80,7 @@
 {:else}
   <AppShell>
     {#key pageKey}
-      <div class="flex min-h-0 flex-1 flex-col" in:fly={{ y: 6, duration: duration(200) }}>
+      <div class="flex min-h-0 flex-1 flex-col" in:fly={{ y: 6, duration: duration(200), easing: easeOut }}>
         {#if route.name === "home"}
           {#if workspaces.loaded && workspaces.list.length === 0}
             <Welcome />

@@ -37,7 +37,7 @@ vservx watches every saved server that has passed a connection test, all the tim
 Each instance shows its state (Ready, Starting, Not responding, Restarting, Crashed, Stopped, Paused), model, port, context length, GPUs, image and vLLM version. A crashed container shows its exit code, whether it ran out of memory, and how often Docker restarted it.
 
 ### Metrics
-Every 10 seconds vservx reads each ready instance's `/health` and Prometheus `/metrics` through the SSH connection, and keeps:
+Every 5 seconds vservx reads each ready instance's `/health` and Prometheus `/metrics` through the SSH connection, and keeps:
 
 - **Load:** running and waiting requests
 - **KV cache:** cache usage percentage
@@ -45,7 +45,7 @@ Every 10 seconds vservx reads each ready instance's `/health` and Prometheus `/m
 - **Latency:** time to first token, averaged over the last minute
 - **GPU:** utilization, memory and temperature from `nvidia-smi`, and which containers use each GPU
 
-15 minutes of history is kept in memory for the charts; it starts again empty when vservx restarts. Longer history is Prometheus's job (see Integrations).
+30 minutes of history is kept in memory for the charts; it starts again empty when vservx restarts. Longer history is Prometheus's job (see Integrations).
 
 ### Management
 - **Stop / Force kill / Restart:** uses the right mechanism for each launch type (Docker, systemd, or process signals)
@@ -191,9 +191,9 @@ Settings come from `VSERVX_*` environment variables or a `.env` file in the dire
 | Setting | Default | |
 |---|---|---|
 | `VSERVX_WATCH_ENABLED` | `true` | Watch servers at all |
-| `VSERVX_USAGE_INTERVAL_SECONDS` | `10` | How often health, usage and GPUs are read |
+| `VSERVX_USAGE_INTERVAL_SECONDS` | `5` | How often health, usage and GPUs are read |
 | `VSERVX_DISCOVERY_INTERVAL_SECONDS` | `60` | How often vLLM containers are looked for |
-| `VSERVX_HISTORY_MINUTES` | `15` | Usage history kept in memory for the charts |
+| `VSERVX_HISTORY_MINUTES` | `30` | Usage history kept in memory for the charts |
 | `VSERVX_WATCH_CONCURRENCY` | `8` | Most servers doing SSH work at the same moment |
 
 Local data lives in `~/.config/vservx/` (override with `VSERVX_DATA_DIR`). This directory is the one thing to back up, and the one volume to mount when running in Docker:

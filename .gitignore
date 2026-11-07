@@ -5,6 +5,14 @@ workspace.md
 /.claude/
 /.ignore
 
+# Caveman agent rules
+/.cursor/rules/caveman.mdc
+/.windsurf/rules/caveman.md
+/.clinerules/caveman.md
+/.github/copilot-instructions.md
+/.opencode/AGENTS.md
+/AGENTS.md
+
 # Python
 __pycache__/
 *.py[cod]
