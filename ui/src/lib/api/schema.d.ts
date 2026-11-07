@@ -301,6 +301,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Overviews
+         * @description Each of the caller's workspaces at a glance, from what the watcher has seen.
+         */
+        get: operations["list_overviews_api_workspaces_overview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}": {
         parameters: {
             query?: never;
@@ -319,8 +339,11 @@ export interface paths {
         delete: operations["delete_my_workspace_api_workspaces__workspace_id__delete"];
         options?: never;
         head?: never;
-        /** Rename Workspace */
-        patch: operations["rename_workspace_api_workspaces__workspace_id__patch"];
+        /**
+         * Update Workspace
+         * @description Rename the workspace, change its icon, or both.
+         */
+        patch: operations["update_workspace_api_workspaces__workspace_id__patch"];
         trace?: never;
     };
     "/api/workspaces/{workspace_id}/owner": {
@@ -753,6 +776,15 @@ export interface components {
             /** Instances */
             instances: string[];
         };
+        /** GpuTotalsRead */
+        GpuTotalsRead: {
+            /** Count */
+            count: number;
+            /** Memory Used Mib */
+            memory_used_mib: number | null;
+            /** Memory Total Mib */
+            memory_total_mib: number | null;
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -982,6 +1014,24 @@ export interface components {
             private_key?: string | null;
             /** Passphrase */
             passphrase?: string | null;
+        };
+        /**
+         * ServerCountsRead
+         * @description A workspace's watched servers (jump hosts aren't watched), by how they're doing.
+         */
+        ServerCountsRead: {
+            /** Total */
+            total: number;
+            /** Up */
+            up: number;
+            /** Not Tested */
+            not_tested: number;
+            /** Unreachable */
+            unreachable: number;
+            /** Trouble */
+            trouble: number;
+            /** Docker Problem */
+            docker_problem: number;
         };
         /** ServerCreate */
         ServerCreate: {
@@ -1269,6 +1319,24 @@ export interface components {
         WorkspaceCreate: {
             /** Name */
             name: string;
+            /** Icon */
+            icon?: string | null;
+        };
+        /**
+         * WorkspaceOverviewRead
+         * @description What a workspace's card on the landing page needs.
+         */
+        WorkspaceOverviewRead: {
+            /** Workspace Id */
+            workspace_id: number;
+            servers: components["schemas"]["ServerCountsRead"];
+            /** Instances */
+            instances: {
+                [key: string]: number;
+            };
+            gpus: components["schemas"]["GpuTotalsRead"] | null;
+            /** Models */
+            models: string[];
         };
         /** WorkspaceRead */
         WorkspaceRead: {
@@ -1276,6 +1344,8 @@ export interface components {
             id: number;
             /** Name */
             name: string;
+            /** Icon */
+            icon: string | null;
             role: components["schemas"]["WorkspaceRole"];
             /** Member Count */
             member_count: number;
@@ -1291,10 +1361,15 @@ export interface components {
          * @enum {string}
          */
         WorkspaceRole: "viewer" | "operator" | "owner";
-        /** WorkspaceUpdate */
+        /**
+         * WorkspaceUpdate
+         * @description Partial update: omitted fields are left unchanged; a null icon goes back to the default.
+         */
         WorkspaceUpdate: {
             /** Name */
-            name: string;
+            name?: string | null;
+            /** Icon */
+            icon?: string | null;
         };
     };
     responses: never;
@@ -1844,6 +1919,26 @@ export interface operations {
             };
         };
     };
+    list_overviews_api_workspaces_overview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceOverviewRead"][];
+                };
+            };
+        };
+    };
     get_workspace_api_workspaces__workspace_id__get: {
         parameters: {
             query?: never;
@@ -1904,7 +1999,7 @@ export interface operations {
             };
         };
     };
-    rename_workspace_api_workspaces__workspace_id__patch: {
+    update_workspace_api_workspaces__workspace_id__patch: {
         parameters: {
             query?: never;
             header?: never;

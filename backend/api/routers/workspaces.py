@@ -5,6 +5,7 @@ from api.auth import CurrentUserDep, WorkspaceAccess, WorkspaceAccessDep, requir
 from api.db.deps import SessionDep
 from api.enums import WorkspaceRole
 from api.models import WorkspaceMember
+from api.routers.watch import WatcherDep
 from api.schemas import (
     MemberAdd,
     MemberRead,
@@ -14,6 +15,7 @@ from api.schemas import (
     WorkspaceRead,
     WorkspaceUpdate,
 )
+from api.schemas.watch import WorkspaceOverviewRead
 from api.service.workspaces import (
     account_that_can_join,
     change_owner,
@@ -23,8 +25,10 @@ from api.service.workspaces import (
     list_workspaces_for,
     member_read,
     name_taken,
+    watched_server_ids,
     workspace_read,
 )
+from api.watch.overview import workspace_overview
 
 router = APIRouter(prefix="/workspaces", tags=["workspaces"])
 
@@ -60,11 +64,20 @@ async def list_my_workspaces(user: CurrentUserDep, session: SessionDep) -> list[
     return await list_workspaces_for(session, user)
 
 
+# Before the /{workspace_id} routes, or "overview" would be read as an id.
+@router.get("/overview", response_model=list[WorkspaceOverviewRead])
+async def list_overviews(user: CurrentUserDep, session: SessionDep, watcher: WatcherDep) -> list[WorkspaceOverviewRead]:
+    """Each of the caller's workspaces at a glance, from what the watcher has seen."""
+    servers = await watched_server_ids(session, user)
+    return [workspace_overview(workspace_id, [watcher.view(server_id) for server_id in server_ids])
+            for workspace_id, server_ids in servers.items()]
+
+
 @router.post("", response_model=WorkspaceRead, status_code=status.HTTP_201_CREATED)
 async def create_my_workspace(data: WorkspaceCreate, user: CurrentUserDep, session: SessionDep) -> WorkspaceRead:
     """Anyone signed in can create a workspace, and becomes its owner."""
     await _name_free(session, data.name)
-    workspace = await create_workspace(session, user, data.name)
+    workspace = await create_workspace(session, user, data.name, data.icon)
     return await workspace_read(session, workspace, WorkspaceRole.OWNER)
 
 
@@ -74,10 +87,14 @@ async def get_workspace(access: WorkspaceAccessDep, session: SessionDep) -> Work
 
 
 @router.patch("/{workspace_id}", response_model=WorkspaceRead, dependencies=_owner_only)
-async def rename_workspace(data: WorkspaceUpdate, access: WorkspaceAccessDep, session: SessionDep) -> WorkspaceRead:
-    # Changing only the case of its own name is fine.
-    await _name_free(session, data.name, besides=access.workspace.id)
-    access.workspace.name = data.name
+async def update_workspace(data: WorkspaceUpdate, access: WorkspaceAccessDep, session: SessionDep) -> WorkspaceRead:
+    """Rename the workspace, change its icon, or both."""
+    if data.name is not None:
+        # Changing only the case of its own name is fine.
+        await _name_free(session, data.name, besides=access.workspace.id)
+        access.workspace.name = data.name
+    if "icon" in data.model_fields_set:
+        access.workspace.icon = data.icon
     await session.commit()
     return await workspace_read(session, access.workspace, access.role)
 

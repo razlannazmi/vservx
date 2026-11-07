@@ -21,6 +21,7 @@
   import SignIn from "./pages/SignIn.svelte";
   import SignUp from "./pages/SignUp.svelte";
   import Welcome from "./pages/Welcome.svelte";
+  import WorkspacesPage from "./pages/Workspaces.svelte";
 
   onMount(() => {
     void loadSession();
@@ -43,13 +44,6 @@
   // A fresh page, sliding in, for each page and each workspace, so nothing of one shows while the
   // next loads. Moving between servers stays on the same page; the details have their own motion.
   const pageKey = $derived(`${route.name}:${workspace?.id ?? ""}`);
-
-  // Home is the first workspace's servers page.
-  $effect(() => {
-    if (route.name === "home" && workspaces.loaded && workspaces.list.length > 0) {
-      navigate(`/workspaces/${workspaces.list[0].slug}`, { replace: true });
-    }
-  });
 
   // A workspace that isn't in the list (gone, renamed, or never yours): check once more, then go home.
   $effect(() => {
@@ -82,8 +76,11 @@
     {#key pageKey}
       <div class="flex min-h-0 flex-1 flex-col" in:fly={{ y: 6, duration: duration(200), easing: easeOut }}>
         {#if route.name === "home"}
+          <!-- Home is every workspace as a card; with none yet, a way to make one. -->
           {#if workspaces.loaded && workspaces.list.length === 0}
             <Welcome />
+          {:else if workspaces.loaded}
+            <WorkspacesPage />
           {/if}
         {:else if "workspaceSlug" in route}
           {#if workspace}

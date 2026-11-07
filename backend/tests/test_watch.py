@@ -13,7 +13,9 @@ from api.enums import DockerStatus, InstanceState, WatchState, WorkspaceRole
 from api.ssh.connect import Hop
 from api.watch.docker import parse_inspect, parse_ps, probe_docker, target
 from api.watch.frameworks import MetricSample, framework_for
+from api.schemas.watch import GpuRead, GpuTotalsRead, ServerCountsRead, ServerWatchRead, WatchedInstanceRead
 from api.watch.gpus import gpu_users, parse_gpus
+from api.watch.overview import workspace_overview
 from api.watch.server import ServerWatch, WatchConfig
 from api.watch.shell import CommandResult
 from api.watch.states import Probe, instance_state
@@ -130,6 +132,35 @@ def test_counter_reset_skips_interval() -> None:
     assert after.ttft_seconds == pytest.approx(0.15)
     history.add(_sample(240, 110, 0.4, 3), T0 + timedelta(seconds=30))
     assert len(history.points) == 3
+
+
+def _view(state: WatchState, docker: DockerStatus = DockerStatus.PLAIN, instances=(), gpus=None) -> ServerWatchRead:
+    return ServerWatchRead.model_construct(state=state, docker=docker, instances=list(instances), gpus=gpus)
+
+
+def test_workspace_overview_adds_up() -> None:
+    def ready(model: str) -> WatchedInstanceRead:
+        return WatchedInstanceRead.model_construct(state=InstanceState.READY, model=model)
+
+    def gpu(used: float | None, total: float | None) -> GpuRead:
+        return GpuRead.model_construct(memory_used_mib=used, memory_total_mib=total)
+
+    crashed = WatchedInstanceRead.model_construct(state=InstanceState.CRASHED, model="org/Old-1B")
+    overview = workspace_overview(7, [
+        _view(WatchState.CONNECTED, instances=[ready("meta/Llama-70B"), ready("meta/Llama-70B"), crashed],
+              gpus=[gpu(1000.0, 2000.0), gpu(None, 2000.0)]),
+        # Down: what it last saw stays in its view, but isn't current, so none of it counts.
+        _view(WatchState.UNREACHABLE, instances=[ready("stale/Gone-7B")], gpus=[gpu(500.0, 1000.0)]),
+        _view(WatchState.CONNECTED, docker=DockerStatus.NEEDS_SUDO_PASSWORD),
+        _view(WatchState.NOT_TESTED),
+    ])
+    assert overview.servers == ServerCountsRead(total=4, up=1, not_tested=1, unreachable=1, trouble=1, docker_problem=1)
+    assert overview.instances == {InstanceState.READY: 2, InstanceState.CRASHED: 1}
+    assert overview.gpus == GpuTotalsRead(count=2, memory_used_mib=1000.0, memory_total_mib=2000.0)
+    assert overview.models == ["meta/Llama-70B"]  # ready only, once each
+    assert workspace_overview(8, [_view(WatchState.CONNECTED, gpus=[])]).gpus is None
+    assert workspace_overview(9, [_view(WatchState.CONNECTED, gpus=[gpu(None, None)])]).gpus == GpuTotalsRead(
+        count=1, memory_used_mib=None, memory_total_mib=None)
 
 
 # --- One server's watcher, against an in-process SSH server

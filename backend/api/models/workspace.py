@@ -17,6 +17,8 @@ class Workspace(Base):
     # The name case-folded: unique, so "Homelab" and "homelab" can't both exist. The web app's
     # addresses are made from names.
     name_key: Mapped[str] = mapped_column(String(255), unique=True)
+    # A movingicons icon name, chosen by the owner. None: the UI's default icon.
+    icon: Mapped[str | None] = mapped_column(String(64), default=None)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(default=utcnow, onupdate=utcnow)
 

@@ -30,6 +30,7 @@ export type InstanceHistoryRead = Schemas["InstanceHistoryRead"];
 export type InstanceState = Schemas["InstanceState"];
 export type WatchState = Schemas["WatchState"];
 export type DockerStatus = Schemas["DockerStatus"];
+export type WorkspaceOverviewRead = Schemas["WorkspaceOverviewRead"];
 
 const listeners = new Set<(signal: ApiSignal) => void>();
 

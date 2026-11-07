@@ -5,10 +5,12 @@ import {
   type ServerRead,
   type WatchedInstanceRead,
   type WatchSummaryRead,
+  type WorkspaceOverviewRead,
 } from "./api/client";
 import { clockTime } from "./format";
 import { CHAIN_LOOP_MS, CHAIN_STEPS, chainScene, containerStep, HOPS, hopStep, untilNextChange } from "./hops";
 import { easeInOut, easeOut } from "./motion";
+import { memoryLabel, overviewCard } from "./overview";
 import { serverStatus } from "./servers";
 import { slugify, withSlugs } from "./slug";
 import {
@@ -20,6 +22,7 @@ import {
   matchesFilter,
   matchesQuery,
 } from "./watch";
+import { DEFAULT_ICON, iconName, WORKSPACE_ICONS } from "./workspace-icons";
 
 const json = (status: number, body: unknown) =>
   new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -170,4 +173,58 @@ test("only an instance whose state changed since the last poll flashes", () => {
   ];
   expect(changedStates(last, now)).toEqual(["a"]);
   expect(changedStates(new Map(), now)).toEqual([]);
+});
+
+test("an unknown or missing icon falls back to the default", () => {
+  expect(iconName(null)).toBe(DEFAULT_ICON);
+  expect(iconName("no-such-icon")).toBe(DEFAULT_ICON);
+  expect(WORKSPACE_ICONS.every((icon) => iconName(icon.name) === icon.name)).toBe(true);
+  expect(WORKSPACE_ICONS.some((icon) => icon.name === DEFAULT_ICON)).toBe(true);
+  expect(WORKSPACE_ICONS.length).toBeGreaterThanOrEqual(24);
+  // Icons the app already uses for something else (Workspaces heading, mode toggle, settings gear) aren't offered.
+  expect(WORKSPACE_ICONS.filter((icon) => ["layers", "sun", "cog", "settings"].includes(icon.name))).toEqual([]);
+});
+
+const ov = (servers: object, instances = {}, gpus: object | null = null, models: string[] = []) =>
+  ({
+    workspace_id: 1,
+    servers: { total: 0, up: 0, not_tested: 0, unreachable: 0, trouble: 0, docker_problem: 0, ...servers },
+    instances,
+    gpus,
+    models,
+  }) as unknown as WorkspaceOverviewRead;
+
+test("workspace card lines", () => {
+  expect(overviewCard(undefined, false).checking).toBe(true);
+  expect(overviewCard(undefined, true).empty).toBe(true); // created since the last poll
+  expect(overviewCard(ov({}), true).empty).toBe(true);
+  const servers = (s: object) => overviewCard(ov(s), true).servers;
+  expect(servers({ total: 3, up: 3 })).toEqual({ tone: "ok", label: "3 servers up" });
+  expect(servers({ total: 1, up: 1 })?.label).toBe("1 server up");
+  expect(servers({ total: 4, up: 3, not_tested: 1 })).toEqual({ tone: "ok", label: "3 of 4 servers up" });
+  expect(servers({ total: 2, up: 1, unreachable: 1, trouble: 1 })).toEqual({ tone: "bad", label: "1 of 2 unreachable" });
+  expect(servers({ total: 3, up: 1, trouble: 1, docker_problem: 1 })).toEqual({ tone: "bad", label: "2 of 3 need attention" });
+  expect(servers({ total: 2, up: 1, docker_problem: 1 })).toEqual({ tone: "warn", label: "1 of 2 need attention" });
+  expect(servers({ total: 2, not_tested: 2 })).toEqual({ tone: "none", label: "not tested yet" });
+  expect(servers({ total: 2 })).toEqual({ tone: "none", label: "checking…" });
+
+  const full = overviewCard(
+    ov({ total: 1, up: 1 }, { ready: 5, crashed: 1, starting: 1 }, { count: 8, memory_used_mib: 217088, memory_total_mib: 393216 }, [
+      "meta-llama/Llama-3.1-70B",
+      "Qwen/Qwen2.5-32B",
+      "a/b",
+      "c/d",
+    ]),
+    true,
+  );
+  expect(full.instances).toEqual({ tone: "bad", label: "1 crashed · 7 instances · 1 starting" });
+  expect(full.gpus?.label).toBe("8 GPUs");
+  expect(full.gpus?.memory).toBe("212 / 384 GiB");
+  expect(full.gpus?.percent).toBeCloseTo(55.2, 1);
+  expect(full.models).toBe("Llama-3.1-70B · Qwen2.5-32B · +2");
+  expect(memoryLabel(1677722, 1992294)).toBe("1.6 / 1.9 TiB");
+  const bare = overviewCard(ov({ total: 1, up: 1 }, {}, { count: 2, memory_used_mib: null, memory_total_mib: null }), true);
+  expect(bare.gpus).toEqual({ label: "2 GPUs", memory: null, percent: null });
+  expect([bare.instances, bare.models]).toEqual([null, null]);
+  expect(overviewCard(ov({ total: 1, up: 1 }), true).gpus).toBeNull();
 });

@@ -19,8 +19,8 @@ async def name_taken(session: AsyncSession, name: str, *, besides: int | None = 
     return bool(await session.scalar(select(query)))
 
 
-async def create_workspace(session: AsyncSession, owner: User, name: str) -> Workspace:
-    workspace = Workspace(name=name)
+async def create_workspace(session: AsyncSession, owner: User, name: str, icon: str | None = None) -> Workspace:
+    workspace = Workspace(name=name, icon=icon)
     session.add(workspace)
     await session.flush()
     session.add(WorkspaceMember(workspace_id=workspace.id, user_id=owner.id, role=WorkspaceRole.OWNER))
@@ -38,8 +38,8 @@ async def _member_counts(session: AsyncSession, workspace_ids: Iterable[int]) ->
 
 
 def _read(workspace: Workspace, role: WorkspaceRole, member_count: int) -> WorkspaceRead:
-    return WorkspaceRead(id=workspace.id, name=workspace.name, role=role, member_count=member_count,
-                         created_at=workspace.created_at)
+    return WorkspaceRead(id=workspace.id, name=workspace.name, icon=workspace.icon, role=role,
+                         member_count=member_count, created_at=workspace.created_at)
 
 
 async def workspace_read(session: AsyncSession, workspace: Workspace, role: WorkspaceRole) -> WorkspaceRead:
@@ -57,6 +57,26 @@ async def list_workspaces_for(session: AsyncSession, user: User) -> list[Workspa
     )).all()
     counts = await _member_counts(session, [workspace.id for workspace, _ in rows])
     return [_read(workspace, role, counts.get(workspace.id, 0)) for workspace, role in rows]
+
+
+async def watched_server_ids(session: AsyncSession, user: User) -> dict[int, list[int]]:
+    """The user's workspaces, in list_workspaces_for's order, each with its watched (not jump-only)
+    servers' ids. A workspace with no servers has an empty list."""
+    workspace_ids = await session.scalars(
+        select(Workspace.id)
+        .join(WorkspaceMember, WorkspaceMember.workspace_id == Workspace.id)
+        .where(WorkspaceMember.user_id == user.id)
+        .order_by(Workspace.name, Workspace.id)
+    )
+    servers: dict[int, list[int]] = {workspace_id: [] for workspace_id in workspace_ids}
+    rows = await session.execute(
+        select(Server.workspace_id, Server.id)
+        .where(Server.workspace_id.in_(list(servers)), Server.jump_only.is_(False))
+        .order_by(Server.name, Server.id)
+    )
+    for workspace_id, server_id in rows:
+        servers[workspace_id].append(server_id)
+    return servers
 
 
 def _summary(user: User) -> AccountSummary:
