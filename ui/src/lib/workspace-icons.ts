@@ -1,7 +1,6 @@
 /** The icons an owner can give a workspace: animated Lucide icons from movingicons (@jis3r/icons). */
 
 import type { Component } from "svelte";
-import Activity from "@jis3r/icons/icons/activity";
 import Blocks from "@jis3r/icons/icons/blocks";
 import Bolt from "@jis3r/icons/icons/bolt";
 import Bot from "@jis3r/icons/icons/bot";
@@ -24,6 +23,7 @@ import Orbit from "@jis3r/icons/icons/orbit";
 import Radar from "@jis3r/icons/icons/radar";
 import Radio from "@jis3r/icons/icons/radio";
 import Rocket from "@jis3r/icons/icons/rocket";
+import SatelliteDish from "@jis3r/icons/icons/satellite-dish";
 import ServerCog from "@jis3r/icons/icons/server-cog";
 import ShieldCheck from "@jis3r/icons/icons/shield-check";
 import Snowflake from "@jis3r/icons/icons/snowflake";
@@ -43,8 +43,8 @@ export const DEFAULT_ICON = "boxes";
 
 // Names are the package's file names, which is what the backend stores. Each is imported on its
 // own, so only these are bundled. None of them is an icon the app already uses for something else
-// (layers: the Workspaces heading; sun and moon: the mode toggle; a gear: settings), so a
-// workspace's icon never reads as a control.
+// (layers: the Workspaces heading; sun and moon: the mode toggle; a gear: settings; the activity
+// pulse: the app's own icon), so a workspace's icon never reads as a control or as the app.
 export const WORKSPACE_ICONS: WorkspaceIconChoice[] = [
   { name: "boxes", label: "Boxes", component: Boxes },
   { name: "server-cog", label: "Server", component: ServerCog },
@@ -61,7 +61,7 @@ export const WORKSPACE_ICONS: WorkspaceIconChoice[] = [
   { name: "orbit", label: "Orbit", component: Orbit },
   { name: "radar", label: "Radar", component: Radar },
   { name: "gauge", label: "Gauge", component: Gauge },
-  { name: "activity", label: "Activity", component: Activity },
+  { name: "satellite-dish", label: "Satellite", component: SatelliteDish },
   { name: "chart-line", label: "Line chart", component: ChartLine },
   { name: "chart-bar", label: "Bar chart", component: ChartBar },
   { name: "chart-scatter", label: "Scatter chart", component: ChartScatter },
