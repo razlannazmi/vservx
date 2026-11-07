@@ -2,11 +2,11 @@
 
 > Point it at a server, see your vLLMs. No agents, no config.
 
-**vservx** ("vLLM-serve-all") is a lightweight, agentless tool for monitoring and managing vLLM instances on remote GPU servers. It connects over SSH, finds every running vLLM instance, and shows its health, load, and GPU usage in a web dashboard. You don't install anything on the servers.
+**vservx** ("vLLM-serve-all") is a lightweight, agentless tool for monitoring vLLM instances on remote GPU servers. It connects over SSH, finds every running vLLM instance, and shows its health, load, and GPU usage in a web dashboard. You don't install anything on the servers.
 
 ## Why
 
-On bare GPU servers, checking which models are running, on which ports, and how busy they are usually means SSH-ing into each box and running commands by hand. Starting and stopping instances is manual too. vservx puts all of that in one place.
+On bare GPU servers, checking which models are running, on which ports, and how busy they are usually means SSH-ing into each box and running commands by hand. vservx puts all of that in one place.
 
 ## Key Components
 
@@ -16,7 +16,7 @@ On bare GPU servers, checking which models are running, on which ports, and how 
 - **Jump hosts:** any saved server can be the jump host for another, and chains can be any length (laptop → bastion-1 → bastion-2 → gpu-7). Each hop uses its own credentials.
 - **Connection test:** test a saved server, or its settings before saving. The result shows each hop in order and, if one fails, which one and why.
 - **Host keys remembered:** vservx records each server's host key on the first successful login and refuses to connect if it changes, until an operator of its workspace accepts the new key.
-- Import from `~/.ssh/config`: upload your SSH config to get pre-filled servers to review; nothing is saved until you confirm. (In the API today; the web app shows it as coming soon.)
+- Import from `~/.ssh/config`: upload your SSH config to get pre-filled servers to review; nothing is saved until you confirm. (API only; the web app doesn't offer it yet.)
 - Nothing is installed on the remote server, and nothing on the machine running vservx (its `~/.ssh`, agent or config) is used
 
 ### Discovery
@@ -47,7 +47,7 @@ Every 5 seconds vservx reads each ready instance's `/health` and Prometheus `/me
 - **Latency:** time to first token, averaged over the last minute
 - **GPU:** utilization, memory and temperature from `nvidia-smi`, and which containers use each GPU
 
-30 minutes of history is kept in memory for the charts; it starts again empty when vservx restarts. Longer history is Prometheus's job (see Integrations).
+30 minutes of history is kept in memory for the charts; it starts again empty when vservx restarts.
 
 ### Snapshots
 vservx remembers how each vLLM container was launched, so a container that's gone can be started again and a redeploy can be traced. Open them with **Snapshots** in the server's header, or the history icon on an Instances row.
@@ -57,21 +57,6 @@ vservx remembers how each vLLM container was launched, so a container that's gon
 - **Change list and compare.** Per container and for the whole server, newest first: when it happened, the kind (first seen, recreated, recreated with the same config, changed, removed), what differs from the snapshot before, and the container IDs. Any two snapshots on a server can be compared, with their commands as a line diff. A container recreated in the last 24 hours gets a "changed" tag in the table.
 - **Removed containers.** A container that's `docker rm`'d keeps its snapshots. It stays greyed in the Instances table for 7 days and in the server's change list for good. Nothing is marked removed when the server can't be reached or `docker ps` fails.
 - **API key fingerprint.** The vLLM API key is kept only as an 8-character keyed fingerprint (HMAC, keyed from vservx's key file). **Check a key** tells anyone whether a key they found matches, at most 10 times a minute per person. No secret value is ever stored.
-
-### Management
-- **Stop / Force kill / Restart:** uses the right mechanism for each launch type (Docker, systemd, or process signals)
-- **Start:** launch a new instance from a form or a raw command, run as a managed Docker container or `systemd-run` unit
-- **Preflight checks:** before starting, checks that the port is free, there is enough GPU memory, and the model is cached
-- **Pre-stop snapshots:** take a snapshot before every stop, once stopping from vservx exists
-- **Logs:** view and tail instance logs
-- **Test:** send a small completion request and see the response and latency
-- **Confirmations:** destructive actions show in-flight requests and ask before running
-
-### Integrations
-- **`/metrics`:** re-exports vLLM metrics with `server`, `instance`, and `model` labels for Prometheus
-- **Service discovery:** `/sd` endpoint for Prometheus `http_sd_configs`
-- **Grafana:** ready-made dashboard JSON
-- **OpenTelemetry:** managed instances can send traces to an OTLP endpoint
 
 ## Accounts and workspaces
 
@@ -103,18 +88,15 @@ A workspace always has exactly one owner. An app admin only sees inside workspac
 ```
 ┌──────────────┐        ┌───────────────────────────┐        SSH        ┌──────────────────┐
 │   Browser    │ <────> │    vservx (FastAPI)       │ <───────────────> │  GPU Server(s)   │
-│   (Svelte)   │  JSON  │  - SSH pool (asyncssh)    │                   │  - vLLM (docker/ │
-└──────────────┘  +SSE  │  - discovery              │                   │    systemd/proc) │
-                        │  - metrics poller         │                   │  - nvidia-smi    │
-                        │  - actions + snapshots    │                   └──────────────────┘
+│   (Svelte)   │  JSON  │  - SSH pool (asyncssh)    │                   │  - vLLM (Docker) │
+└──────────────┘        │  - discovery              │                   │  - nvidia-smi    │
+                        │  - metrics poller         │                   └──────────────────┘
+                        │  - snapshots              │
                         │  - SQLite                 │
-                        │  - /metrics  /sd endpoint │
-                        └─────────────┬─────────────┘
-                                      │ scrape
-                              ┌───────▼───────┐      ┌──────────┐
-                              │  Prometheus   │ ───> │ Grafana  │
-                              └───────────────┘      └──────────┘
+                        └───────────────────────────┘
 ```
+
+The web app polls the API every 5 seconds while its tab is visible.
 
 ## Tech Stack
 
@@ -122,12 +104,11 @@ A workspace always has exactly one owner. An app admin only sees inside workspac
 |---|---|
 | Backend | Python, FastAPI |
 | SSH | asyncssh |
-| Metrics export | prometheus_client |
-| Storage | SQLite, created automatically at `~/.config/vservx/vservx.db` |
-| Secrets | Encrypted at rest (Fernet) |
+| Storage | SQLite via SQLAlchemy (async), Alembic migrations; created automatically at `~/.config/vservx/vservx.db` |
+| Secrets | Encrypted at rest (Fernet); account passwords hashed with Argon2 |
 | Frontend | Svelte 5 + Vite, TypeScript, Tailwind CSS with shadcn-svelte |
-| Charts | uPlot |
-| Live updates | Server-Sent Events (SSE) |
+| Charts | Hand-drawn SVG |
+| Live updates | Polling |
 
 ## Development
 
