@@ -20,14 +20,15 @@ from api.db.engine import create_engine, create_sessionmaker
 from api.enums import WorkspaceRole
 from api.main import create_app
 from api.models import User, WorkspaceMember
-from tests.helpers import ADMIN, USER_PASSWORD, Db, login_headers
-from tests.sshd import BackgroundLoop, FakeSSHD
+from tests.helpers import ADMIN, USER_PASSWORD, BackgroundLoop, Db, FakeSSHD, FakeVLLM, login_headers
 
 
 @pytest.fixture(autouse=True)
 def data_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """Point every test at its own data dir so no test touches ~/.config/vservx."""
+    """Point every test at its own data dir so no test touches ~/.config/vservx. Servers aren't
+    watched in the background unless a test turns it on."""
     monkeypatch.setenv("VSERVX_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("VSERVX_WATCH_ENABLED", "false")
     get_settings.cache_clear()
     yield tmp_path
     get_settings.cache_clear()
@@ -82,7 +83,7 @@ def db(data_dir: Path) -> Db:
 
 @pytest.fixture
 def add_user(client: TestClient, db: Db) -> Callable[..., None]:
-    """Insert a user directly; there is no user API yet."""
+    """Insert an approved user directly, skipping sign-up and approval."""
 
     def add(email: str, password: str = USER_PASSWORD, **fields: Any) -> None:
         fields.setdefault("password_hash", hash_password(password))
@@ -131,20 +132,19 @@ def sshd(ssh_loop: BackgroundLoop) -> Iterator[Callable[..., FakeSSHD]]:
 
 
 @pytest.fixture
+def fake_vllm() -> Iterator[FakeVLLM]:
+    """vLLM's HTTP endpoints on a local port, for a FakeSSHD to forward to."""
+    vllm = FakeVLLM()
+    yield vllm
+    vllm.close()
+
+
+@pytest.fixture
 def closed_port() -> int:
     """A local port nothing listens on."""
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return sock.getsockname()[1]
-
-
-@pytest.fixture
-def silent_port() -> Iterator[int]:
-    """A local port that accepts TCP connections and never says anything."""
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        sock.listen(8)
-        yield sock.getsockname()[1]
 
 
 @pytest.fixture

@@ -53,6 +53,9 @@
   // "password", or a saved key's id.
   let signsIn = $state(PASSWORD);
   let password = $state("");
+  // Used only to run docker ps / docker inspect through sudo.
+  let sudoPassword = $state("");
+  let removeSudoPassword = $state(false);
   let jump = $state(DIRECT);
   let jumpOnly = $state(false);
   let result = $state<ConnectionTestResult | null>(null);
@@ -66,6 +69,7 @@
   const usesKey = $derived(signsIn !== PASSWORD);
   // Stored secrets never reach the browser: an empty field keeps the saved password.
   const keepsPassword = $derived(!usesKey && server?.auth_type === "password" && server.has_password);
+  const keepsSudoPassword = $derived(server?.has_sudo_password ?? false);
   const signsInLabel = $derived(
     usesKey ? `Saved key “${keys.find((each) => String(each.id) === signsIn)?.name ?? "…"}”` : "Password",
   );
@@ -86,6 +90,8 @@
     username = server?.username ?? "";
     signsIn = server?.auth_type === "key" && server.ssh_key_id !== null ? String(server.ssh_key_id) : PASSWORD;
     password = "";
+    sudoPassword = "";
+    removeSudoPassword = false;
     jump = server?.jump_server_id != null ? String(server.jump_server_id) : DIRECT;
     jumpOnly = server?.jump_only ?? false;
     result = null;
@@ -118,9 +124,15 @@
 
   function changes(): ServerUpdate {
     const { password: typed, ...rest } = settings();
+    // An empty sudo password field keeps the saved one; the tick removes it.
+    const sudo: ServerUpdate = removeSudoPassword
+      ? { sudo_password: null }
+      : sudoPassword
+        ? { sudo_password: sudoPassword }
+        : {};
     // Switching to a key clears the stored password; an empty password field keeps it.
-    if (usesKey) return { ...rest, password: null };
-    return typed ? { ...rest, password: typed } : rest;
+    if (usesKey) return { ...rest, ...sudo, password: null };
+    return typed ? { ...rest, ...sudo, password: typed } : { ...rest, ...sudo };
   }
 
   async function test() {
@@ -153,7 +165,10 @@
           params: { path: { ...path, server_id: server.id } },
           body: changes(),
         })
-      : await api.POST("/api/workspaces/{workspace_id}/servers", { params: { path }, body: settings() });
+      : await api.POST("/api/workspaces/{workspace_id}/servers", {
+          params: { path },
+          body: { ...settings(), sudo_password: sudoPassword || null },
+        });
     saving = false;
     if (error || !data) {
       toast.error(errorMessage(error, "Couldn't save the server"));
@@ -242,6 +257,30 @@
           {#if keepsPassword}
             <p class="text-xs text-muted-foreground">Leave it empty to keep the saved password.</p>
           {/if}
+        </div>
+      {/if}
+
+      <div class="space-y-2">
+        <Label for="server-sudo-password">Sudo password (only if Docker needs it)</Label>
+        <Input
+          id="server-sudo-password"
+          type="password"
+          autocomplete="new-password"
+          placeholder={keepsSudoPassword && !removeSudoPassword ? "Unchanged" : undefined}
+          disabled={removeSudoPassword}
+          bind:value={sudoPassword}
+        />
+        {#if keepsSudoPassword}
+          <p class="text-xs text-muted-foreground">Leave it empty to keep the saved sudo password.</p>
+        {:else if !usesKey}
+          <p class="text-xs text-muted-foreground">Leave empty to use the sign-in password.</p>
+        {/if}
+      </div>
+
+      {#if keepsSudoPassword}
+        <div class="flex items-center justify-between gap-4">
+          <Label for="server-remove-sudo">Remove the saved sudo password</Label>
+          <Switch id="server-remove-sudo" bind:checked={removeSudoPassword} />
         </div>
       {/if}
 

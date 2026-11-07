@@ -32,7 +32,7 @@ router = APIRouter(prefix="/workspaces/{workspace_id}/servers", tags=["servers"]
 _operator_only = [Depends(require_operator)]
 
 
-async def _get_or_404(session: AsyncSession, access: WorkspaceAccess, server_id: int) -> Server:
+async def get_server_or_404(session: AsyncSession, access: WorkspaceAccess, server_id: int) -> Server:
     server = await session.get(Server, server_id)
     # Another workspace's server is as good as missing.
     if server is None or server.workspace_id != access.workspace.id:
@@ -84,7 +84,7 @@ def preview_ssh_config_import(data: SSHConfigImport) -> SSHConfigPreview:
 
 @router.post("/{server_id}/test", response_model=ConnectionTestResult)
 async def test_saved_server(server_id: int, access: WorkspaceAccessDep, session: SessionDep) -> ConnectionTestResult:
-    server = await _get_or_404(session, access, server_id)
+    server = await get_server_or_404(session, access, server_id)
     try:
         return await check_server_connection(session, server, get_settings().ssh_connect_timeout)
     except ValueError as exc:
@@ -95,7 +95,7 @@ async def test_saved_server(server_id: int, access: WorkspaceAccessDep, session:
 async def accept_server_host_key(
     server_id: int, data: HostKeyAccept, access: WorkspaceAccessDep, session: SessionDep
 ) -> Server:
-    server = await _get_or_404(session, access, server_id)
+    server = await get_server_or_404(session, access, server_id)
     try:
         await accept_host_key(session, server, data.fingerprint, get_settings().ssh_connect_timeout)
     except HostKeyMismatch:
@@ -110,12 +110,12 @@ async def accept_server_host_key(
 
 @router.get("/{server_id}", response_model=ServerRead)
 async def get_server(server_id: int, access: WorkspaceAccessDep, session: SessionDep) -> Server:
-    return await _get_or_404(session, access, server_id)
+    return await get_server_or_404(session, access, server_id)
 
 
 @router.patch("/{server_id}", response_model=ServerRead, dependencies=_operator_only)
 async def update_server(server_id: int, data: ServerUpdate, access: WorkspaceAccessDep, session: SessionDep) -> Server:
-    server = await _get_or_404(session, access, server_id)
+    server = await get_server_or_404(session, access, server_id)
     try:
         apply_server_update(server, data)
         await check_links(session, server)
@@ -127,7 +127,7 @@ async def update_server(server_id: int, data: ServerUpdate, access: WorkspaceAcc
 
 @router.delete("/{server_id}", status_code=status.HTTP_204_NO_CONTENT, dependencies=_operator_only)
 async def delete_server(server_id: int, access: WorkspaceAccessDep, session: SessionDep) -> None:
-    server = await _get_or_404(session, access, server_id)
+    server = await get_server_or_404(session, access, server_id)
     if behind := await count_servers_behind(session, server_id):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                             detail=f"Server is the jump host for {behind} server(s)")

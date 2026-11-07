@@ -24,6 +24,14 @@ export const TONE_DOT: Record<Tone, string> = {
   none: "bg-status-none",
 };
 
+// The tint behind something that just changed state, in its new status colour (InstanceTable rows, ServerCard).
+export const TONE_FLASH: Record<Tone, string> = {
+  ok: "before:bg-status-ok/15",
+  bad: "before:bg-status-bad/15",
+  warn: "before:bg-status-warn/15",
+  none: "before:bg-muted",
+};
+
 export function failureWords(failure: ConnectionFailure | null | undefined): string {
   return failure ? FAILURE_WORDS[failure] : "failed";
 }

@@ -26,6 +26,9 @@ class Server(Base):
     username: Mapped[str] = mapped_column(String(255))
     auth_type: Mapped[AuthType] = mapped_column(str_enum(AuthType))
     password: Mapped[str | None] = mapped_column(EncryptedString)
+    # Used only to run `docker ps` / `docker inspect` through sudo. Without it, a password
+    # server's sign-in password is used.
+    sudo_password: Mapped[str | None] = mapped_column(EncryptedString)
     # The saved key used for key auth; a key in use can't be deleted.
     ssh_key_id: Mapped[int | None] = mapped_column(ForeignKey("ssh_keys.id", ondelete="RESTRICT"), index=True)
     # The server directly in front of this one. Longer chains form from these links.
@@ -57,6 +60,10 @@ class Server(Base):
     @property
     def has_password(self) -> bool:
         return self.password is not None
+
+    @property
+    def has_sudo_password(self) -> bool:
+        return self.sudo_password is not None
 
     @property
     def host_key_fingerprint(self) -> str | None:

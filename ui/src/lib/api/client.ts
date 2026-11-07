@@ -21,6 +21,15 @@ export type AccountRead = Schemas["AccountRead"];
 export type AccountUpdate = Schemas["AccountUpdate"];
 export type AdminWorkspaceRead = Schemas["AdminWorkspaceRead"];
 export type DatabaseRead = Schemas["DatabaseRead"];
+export type WatchSummaryRead = Schemas["WatchSummaryRead"];
+export type ServerWatchRead = Schemas["ServerWatchRead"];
+export type WatchedInstanceRead = Schemas["WatchedInstanceRead"];
+export type GpuRead = Schemas["GpuRead"];
+export type UsagePointRead = Schemas["UsagePointRead"];
+export type InstanceHistoryRead = Schemas["InstanceHistoryRead"];
+export type InstanceState = Schemas["InstanceState"];
+export type WatchState = Schemas["WatchState"];
+export type DockerStatus = Schemas["DockerStatus"];
 
 const listeners = new Set<(signal: ApiSignal) => void>();
 

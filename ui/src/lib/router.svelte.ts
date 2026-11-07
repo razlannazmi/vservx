@@ -4,7 +4,7 @@ export type Route =
   | { name: "sign-in" }
   | { name: "sign-up" }
   | { name: "home" }
-  | { name: "servers"; workspaceSlug: string; serverId: number | null }
+  | { name: "servers"; workspaceSlug: string; serverId: number | null; instance: string | null }
   | { name: "keys" | "members" | "settings"; workspaceSlug: string }
   | { name: "admin-accounts" }
   | { name: "admin-workspaces" }
@@ -29,21 +29,34 @@ function id(text: string): number | null {
   return /^[1-9]\d*$/.test(text) ? Number(text) : null;
 }
 
+function decoded(text: string): string | null {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return null; // A malformed escape: no such page.
+  }
+}
+
 export function matchRoute(path: string): Route {
   const trimmed = path.length > 1 ? path.replace(/\/+$/, "") : path;
   const fixed = FIXED[trimmed];
   if (fixed) return fixed;
 
   // Which workspace a slug names depends on the list, so App resolves it.
-  const [, first, workspaceSlug, page, server, ...rest] = trimmed.split("/");
+  const [, first, workspaceSlug, page, server, sub, name, ...rest] = trimmed.split("/");
   if (first !== "workspaces" || !workspaceSlug || rest.length > 0) return { name: "not-found" };
   if (page === undefined || (page === "servers" && server === undefined)) {
-    return { name: "servers", workspaceSlug, serverId: null };
+    return { name: "servers", workspaceSlug, serverId: null, instance: null };
   }
   if (page === "servers" && server !== undefined) {
     const serverId = id(server);
-    return serverId === null ? { name: "not-found" } : { name: "servers", workspaceSlug, serverId };
+    if (serverId === null) return { name: "not-found" };
+    if (sub === undefined) return { name: "servers", workspaceSlug, serverId, instance: null };
+    // An instance is its container's name, within the server.
+    const instance = sub === "instances" && name ? decoded(name) : null;
+    return instance ? { name: "servers", workspaceSlug, serverId, instance } : { name: "not-found" };
   }
+  if (sub !== undefined) return { name: "not-found" };
   if (server === undefined && WORKSPACE_PAGES.has(page)) {
     return { name: page as "keys" | "members" | "settings", workspaceSlug };
   }
@@ -53,9 +66,10 @@ export function matchRoute(path: string): Route {
 export function pathFor(route: Route): string {
   switch (route.name) {
     case "servers":
-      return route.serverId === null
-        ? `/workspaces/${route.workspaceSlug}`
-        : `/workspaces/${route.workspaceSlug}/servers/${route.serverId}`;
+      if (route.serverId === null) return `/workspaces/${route.workspaceSlug}`;
+      return route.instance === null
+        ? `/workspaces/${route.workspaceSlug}/servers/${route.serverId}`
+        : `/workspaces/${route.workspaceSlug}/servers/${route.serverId}/instances/${encodeURIComponent(route.instance)}`;
     case "keys":
     case "members":
     case "settings":

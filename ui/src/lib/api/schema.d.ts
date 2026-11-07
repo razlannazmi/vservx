@@ -531,6 +531,80 @@ export interface paths {
         patch: operations["update_key_api_workspaces__workspace_id__ssh_keys__key_id__patch"];
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/watch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Watch Summaries
+         * @description One line per server in the workspace, for its card.
+         */
+        get: operations["list_watch_summaries_api_workspaces__workspace_id__watch_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/servers/{server_id}/watch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Server Watch */
+        get: operations["get_server_watch_api_workspaces__workspace_id__servers__server_id__watch_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/servers/{server_id}/instances/{name}/history": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Instance History */
+        get: operations["get_instance_history_api_workspaces__workspace_id__servers__server_id__instances__name__history_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/servers/{server_id}/refresh": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refresh Server
+         * @description Look for instances on the server now.
+         */
+        post: operations["refresh_server_api_workspaces__workspace_id__servers__server_id__refresh_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -656,6 +730,29 @@ export interface components {
          * @enum {string}
          */
         DatabaseState: "new" | "current" | "upgrade_required" | "newer_than_app";
+        /**
+         * DockerStatus
+         * @description Whether vservx can run docker on a server, and how.
+         * @enum {string}
+         */
+        DockerStatus: "unknown" | "plain" | "sudo" | "needs_sudo_password" | "sudo_password_rejected" | "sudo_needs_tty" | "unavailable";
+        /** GpuRead */
+        GpuRead: {
+            /** Index */
+            index: number;
+            /** Name */
+            name: string;
+            /** Utilization Percent */
+            utilization_percent: number | null;
+            /** Memory Used Mib */
+            memory_used_mib: number | null;
+            /** Memory Total Mib */
+            memory_total_mib: number | null;
+            /** Temperature C */
+            temperature_c: number | null;
+            /** Instances */
+            instances: string[];
+        };
         /** HTTPValidationError */
         HTTPValidationError: {
             /** Detail */
@@ -707,6 +804,21 @@ export interface components {
             /** Warnings */
             warnings: string[];
         };
+        /** InstanceHistoryRead */
+        InstanceHistoryRead: {
+            /** Name */
+            name: string;
+            /** Interval Seconds */
+            interval_seconds: number;
+            /** Points */
+            points: components["schemas"]["UsagePointRead"][];
+        };
+        /**
+         * InstanceState
+         * @description What a watched instance is doing, from its container and its health check.
+         * @enum {string}
+         */
+        InstanceState: "ready" | "starting" | "not_responding" | "restarting" | "crashed" | "stopped" | "paused" | "unreachable";
         /**
          * LastTestRead
          * @description The latest connection test of a saved server.
@@ -896,6 +1008,8 @@ export interface components {
             jump_only: boolean;
             /** Password */
             password?: string | null;
+            /** Sudo Password */
+            sudo_password?: string | null;
         };
         /** ServerRead */
         ServerRead: {
@@ -924,6 +1038,8 @@ export interface components {
             id: number;
             /** Has Password */
             has_password: boolean;
+            /** Has Sudo Password */
+            has_sudo_password: boolean;
             /** Host Key Fingerprint */
             host_key_fingerprint: string | null;
             /** Host Key Type */
@@ -966,6 +1082,33 @@ export interface components {
             jump_only?: boolean | null;
             /** Password */
             password?: string | null;
+            /** Sudo Password */
+            sudo_password?: string | null;
+        };
+        /** ServerWatchRead */
+        ServerWatchRead: {
+            /** Server Id */
+            server_id: number;
+            state: components["schemas"]["WatchState"];
+            /** Since */
+            since: string | null;
+            /** Message */
+            message: string | null;
+            docker: components["schemas"]["DockerStatus"];
+            /** Docker Message */
+            docker_message: string | null;
+            /** Found At */
+            found_at: string | null;
+            /** Read At */
+            read_at: string | null;
+            /** Instances */
+            instances: components["schemas"]["WatchedInstanceRead"][];
+            /** Gpus */
+            gpus: components["schemas"]["GpuRead"][] | null;
+            /** Gpu Message */
+            gpu_message: string | null;
+            /** Usage Interval Seconds */
+            usage_interval_seconds: number;
         };
         /** SignupRequest */
         SignupRequest: {
@@ -994,6 +1137,26 @@ export interface components {
             token_type: "bearer";
             /** Expires In */
             expires_in: number;
+        };
+        /** UsagePointRead */
+        UsagePointRead: {
+            /**
+             * At
+             * Format: date-time
+             */
+            at: string;
+            /** Running */
+            running: number | null;
+            /** Waiting */
+            waiting: number | null;
+            /** Kv Cache Percent */
+            kv_cache_percent: number | null;
+            /** Tokens In Per S */
+            tokens_in_per_s: number | null;
+            /** Tokens Out Per S */
+            tokens_out_per_s: number | null;
+            /** Ttft Seconds */
+            ttft_seconds: number | null;
         };
         /** UserRead */
         UserRead: {
@@ -1044,6 +1207,63 @@ export interface components {
             input?: unknown;
             /** Context */
             ctx?: Record<string, never>;
+        };
+        /**
+         * WatchState
+         * @description Where vservx stands with watching a server.
+         * @enum {string}
+         */
+        WatchState: "not_tested" | "jump_only" | "checking" | "connected" | "unreachable" | "sign_in_failed" | "host_key_changed";
+        /**
+         * WatchSummaryRead
+         * @description What a server card needs.
+         */
+        WatchSummaryRead: {
+            /** Server Id */
+            server_id: number;
+            state: components["schemas"]["WatchState"];
+            /** Since */
+            since: string | null;
+            docker: components["schemas"]["DockerStatus"];
+            /** Counts */
+            counts: {
+                [key: string]: number;
+            };
+        };
+        /** WatchedInstanceRead */
+        WatchedInstanceRead: {
+            /** Name */
+            name: string;
+            /** Framework */
+            framework: string;
+            state: components["schemas"]["InstanceState"];
+            /** Message */
+            message: string | null;
+            /** Image */
+            image: string;
+            /** Model */
+            model: string | null;
+            /** Port */
+            port: number;
+            /** Max Model Len */
+            max_model_len: number | null;
+            /** Version */
+            version: string | null;
+            /** Gpus */
+            gpus: string[] | null;
+            /** Started At */
+            started_at: string | null;
+            /** Finished At */
+            finished_at: string | null;
+            /** Exit Code */
+            exit_code: number | null;
+            /** Oom Killed */
+            oom_killed: boolean;
+            /** Restart Count */
+            restart_count: number;
+            usage: components["schemas"]["UsagePointRead"] | null;
+            /** Running Trend */
+            running_trend: (number | null)[];
         };
         /** WorkspaceCreate */
         WorkspaceCreate: {
@@ -2339,6 +2559,134 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SavedKeyRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_watch_summaries_api_workspaces__workspace_id__watch_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WatchSummaryRead"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_server_watch_api_workspaces__workspace_id__servers__server_id__watch_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server_id: number;
+                workspace_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerWatchRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_instance_history_api_workspaces__workspace_id__servers__server_id__instances__name__history_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server_id: number;
+                name: string;
+                workspace_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstanceHistoryRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    refresh_server_api_workspaces__workspace_id__servers__server_id__refresh_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server_id: number;
+                workspace_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ServerWatchRead"];
                 };
             };
             /** @description Validation Error */

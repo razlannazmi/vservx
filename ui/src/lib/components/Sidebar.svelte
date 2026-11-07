@@ -12,7 +12,7 @@
   import { admin, loadPendingSignups } from "$lib/admin.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import NewWorkspaceDialog from "$lib/components/NewWorkspaceDialog.svelte";
-  import { duration } from "$lib/motion";
+  import { duration, easeOut } from "$lib/motion";
   import { isOwner } from "$lib/permissions";
   import { followLink, router } from "$lib/router.svelte";
   import { session, signOut } from "$lib/session.svelte";
@@ -85,7 +85,7 @@
         <span class="size-2 rounded-full bg-status-warn" aria-hidden="true"></span>
         <span class="sr-only">(accounts waiting for approval)</span>
       {/if}
-      <ChevronDownIcon class={`size-3.5 transition-transform duration-200 ${folded[section] ? "-rotate-90" : ""}`} />
+      <ChevronDownIcon class={`size-3.5 transition-transform duration-200 ease-out ${folded[section] ? "-rotate-90" : ""}`} />
     </button>
   </h2>
 {/snippet}
@@ -100,7 +100,7 @@
   <section class="-m-1 min-h-0 flex-1 space-y-1 overflow-y-auto p-1" aria-labelledby="sidebar-workspaces">
     {@render heading("workspaces", "Workspaces", LayersIcon, false)}
     {#if !folded.workspaces}
-      <div id="sidebar-workspaces-items" class="space-y-1" transition:slide={{ duration: duration(200) }}>
+      <div id="sidebar-workspaces-items" class="space-y-1" transition:slide={{ duration: duration(200), easing: easeOut }}>
         <ul class="space-y-0.5">
           {#each workspaces.list as workspace (workspace.id)}
             {@const open = workspace.slug === currentWorkspace}
@@ -109,7 +109,7 @@
                 <span class="truncate">{workspace.name}</span>
               </a>
               {#if open}
-                <ul class="mt-0.5 ml-3 space-y-0.5 border-l pl-2" transition:slide={{ duration: duration(200) }}>
+                <ul class="mt-0.5 ml-3 space-y-0.5 border-l pl-2" transition:slide={{ duration: duration(200), easing: easeOut }}>
                   {#each pagesOf(workspace) as page (page.name)}
                     {@const active = route.name === page.name}
                     <li>
@@ -137,7 +137,7 @@
       <section class="space-y-1" aria-labelledby="sidebar-system">
         {@render heading("system", "System", SettingsIcon, folded.system && admin.pendingSignups > 0)}
         {#if !folded.system}
-          <div id="sidebar-system-items" class="space-y-1" transition:slide={{ duration: duration(200) }}>
+          <div id="sidebar-system-items" class="space-y-1" transition:slide={{ duration: duration(200), easing: easeOut }}>
             <a href="/admin/accounts" onclick={followLink} class={itemClass(route.name === "admin-accounts")}
                aria-current={route.name === "admin-accounts" ? "page" : undefined}>
               <span class="flex-1">Accounts</span>
@@ -168,8 +168,8 @@
         <button type="button" onclick={toggleMode} aria-label={modeLabel} title={modeLabel}
                 class="relative grid size-8 shrink-0 place-items-center rounded-md text-sidebar-foreground/75 outline-none
                   hover:bg-sidebar-accent hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-sidebar-ring">
-          <MoonIcon class="size-4 transition-transform duration-200 dark:scale-0 dark:-rotate-90" />
-          <SunIcon class="absolute size-4 scale-0 rotate-90 transition-transform duration-200 dark:scale-100 dark:rotate-0" />
+          <MoonIcon class="size-4 transition-[scale,rotate,opacity] duration-200 ease-out dark:scale-90 dark:-rotate-90 dark:opacity-0" />
+          <SunIcon class="absolute size-4 scale-90 rotate-90 opacity-0 transition-[scale,rotate,opacity] duration-200 ease-out dark:scale-100 dark:rotate-0 dark:opacity-100" />
         </button>
       </div>
       <button type="button" class={itemClass(false)} onclick={() => (confirmSignOut = true)}>

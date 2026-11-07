@@ -1,5 +1,5 @@
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -8,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -23,6 +23,7 @@ from api.routers import router as api_router
 from api.service.database import DatabaseGate, DatabaseNotReady
 from api.service.users import AccountBlocked, seed_admin
 from api.version import __version__
+from api.watch.watcher import Watcher
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     engine = create_engine(settings.db_path)
     app.state.engine = engine
     app.state.sessionmaker = create_sessionmaker(engine)
+    app.state.watcher = Watcher(app.state.sessionmaker, settings)
 
     async def on_database_ready() -> None:
         # Startup work that uses the database. Held back while an upgrade waits.
@@ -59,14 +61,15 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             await _warn_if_secrets_unreadable(engine)
         async with app.state.sessionmaker() as session:
             await seed_admin(session, settings)
-        # Startup: SSH pool, metrics poller go here.
+        await app.state.watcher.start()
 
     app.state.database = DatabaseGate(settings.db_path, on_database_ready)
     await app.state.database.start()
     try:
         yield
     finally:
-        # Shutdown: close SSH connections, stop pollers.
+        # Closes every server's SSH connection.
+        await app.state.watcher.stop()
         await engine.dispose()
 
 
@@ -113,6 +116,17 @@ def create_app() -> FastAPI:
     app.add_exception_handler(DatabaseNotReady, _database_not_ready_handler)
     app.add_exception_handler(IntegrityError, _integrity_error_handler)
     app.add_exception_handler(RequestValidationError, _validation_error_handler)
+
+    @app.middleware("http")
+    async def reload_watcher(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
+        # Any change inside a workspace (servers, keys, tests, host keys, the workspace itself)
+        # brings server watching in step at once, rather than at its next minute.
+        response = await call_next(request)
+        if (request.method not in ("GET", "HEAD", "OPTIONS") and request.url.path.startswith("/api/workspaces/")
+                and response.status_code < 400 and hasattr(request.app.state, "watcher")):
+            request.app.state.watcher.reload()
+        return response
+
     app.include_router(api_router)
 
     if (settings.ui_dir / "index.html").is_file():

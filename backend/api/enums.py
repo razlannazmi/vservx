@@ -55,3 +55,41 @@ class SnapshotTrigger(StrEnum):
     DISCOVERY = "discovery"
     PRE_STOP = "pre-stop"
     MANUAL = "manual"
+
+
+class WatchState(StrEnum):
+    """Where vservx stands with watching a server."""
+
+    NOT_TESTED = "not_tested"
+    JUMP_ONLY = "jump_only"
+    CHECKING = "checking"
+    CONNECTED = "connected"
+    UNREACHABLE = "unreachable"
+    SIGN_IN_FAILED = "sign_in_failed"
+    HOST_KEY_CHANGED = "host_key_changed"
+
+
+class DockerStatus(StrEnum):
+    """Whether vservx can run docker on a server, and how."""
+
+    UNKNOWN = "unknown"
+    PLAIN = "plain"
+    SUDO = "sudo"
+    NEEDS_SUDO_PASSWORD = "needs_sudo_password"
+    SUDO_PASSWORD_REJECTED = "sudo_password_rejected"
+    SUDO_NEEDS_TTY = "sudo_needs_tty"
+    UNAVAILABLE = "unavailable"
+
+
+class InstanceState(StrEnum):
+    """What a watched instance is doing, from its container and its health check."""
+
+    READY = "ready"
+    STARTING = "starting"
+    NOT_RESPONDING = "not_responding"
+    RESTARTING = "restarting"
+    CRASHED = "crashed"
+    STOPPED = "stopped"
+    PAUSED = "paused"
+    # vservx has no way to reach the instance's port.
+    UNREACHABLE = "unreachable"
