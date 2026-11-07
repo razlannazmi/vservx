@@ -181,8 +181,9 @@ test("an unknown or missing icon falls back to the default", () => {
   expect(WORKSPACE_ICONS.every((icon) => iconName(icon.name) === icon.name)).toBe(true);
   expect(WORKSPACE_ICONS.some((icon) => icon.name === DEFAULT_ICON)).toBe(true);
   expect(WORKSPACE_ICONS.length).toBeGreaterThanOrEqual(24);
-  // Icons the app already uses for something else (Workspaces heading, mode toggle, settings gear) aren't offered.
-  expect(WORKSPACE_ICONS.filter((icon) => ["layers", "sun", "cog", "settings"].includes(icon.name))).toEqual([]);
+  // Icons the app already uses for something else (Workspaces heading, mode toggle, settings gear, the app's own
+  // pulse icon) aren't offered.
+  expect(WORKSPACE_ICONS.filter((icon) => ["layers", "sun", "cog", "settings", "activity"].includes(icon.name))).toEqual([]);
 });
 
 const ov = (servers: object, instances = {}, gpus: object | null = null, models: string[] = []) =>

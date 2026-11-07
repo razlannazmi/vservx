@@ -114,7 +114,7 @@
 {/snippet}
 
 <div class="flex min-h-0 flex-1 gap-5 p-5">
-  <aside class="flex w-52 shrink-0 flex-col gap-3 overflow-y-auto" aria-label="Servers">
+  <aside class="-m-1 flex w-54 shrink-0 flex-col gap-3 overflow-y-auto p-1" aria-label="Servers">
     <div class="space-y-2">
       <h1 class="truncate text-lg font-semibold tracking-tight" title={workspace.name}>{workspace.name}</h1>
       {#if operator}
