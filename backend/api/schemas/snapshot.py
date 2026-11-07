@@ -1,45 +1,88 @@
+"""Launch snapshots as the API shows them. Nothing here holds a secret value: secrets are placeholders."""
+
 from datetime import datetime
-from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
-from api.enums import LaunchType, SnapshotTrigger
+from api.enums import SnapshotKind
 
-
-class SnapshotBase(BaseModel):
-    """The captured launch config. Snapshots are immutable, so there is no update schema."""
-
-    trigger: SnapshotTrigger
-    launch_type: LaunchType
-    command: str | None = None
-    cwd: str | None = None
-    run_user: str | None = None
-    # Secrets (e.g. HF_TOKEN) must be masked before a snapshot is created.
-    env: dict[str, Any] | None = None
-    image: str | None = None
-    gpus: list[Any] | None = None
-    ports: list[Any] | None = None
-    volumes: list[Any] | None = None
-    vllm_version: str | None = None
+# Defaults would otherwise mark fields optional in the OpenAPI response schema.
+_READ = ConfigDict(json_schema_serialization_defaults_required=True)
 
 
-class SnapshotCreate(SnapshotBase):
-    server_id: int
-    instance_id: int | None = None
-    # Full raw source: inspect JSON, unit file, or /proc data.
-    raw: str | None = None
+class DifferenceRead(BaseModel):
+    model_config = _READ
+
+    label: str
+    # None on one side means added or removed.
+    before: str | None
+    after: str | None
+    note: str | None
 
 
-class SnapshotRead(SnapshotBase):
-    """Snapshot for lists and diffs; leaves out the potentially large raw source."""
-
-    model_config = ConfigDict(from_attributes=True, json_schema_serialization_defaults_required=True)
+class SnapshotEntryRead(BaseModel):
+    model_config = _READ
 
     id: int
-    server_id: int
-    instance_id: int | None
-    created_at: datetime
+    # The container name.
+    instance: str
+    # The model it served, from its launch arguments.
+    model: str | None
+    kind: SnapshotKind
+    happened_at: datetime
+    noticed_at: datetime
+    # On removed entries: when the container was last seen.
+    last_seen: datetime | None
+    # 12 characters.
+    container_id: str | None
+    # Against the instance's previous snapshot; empty for first seen and removed entries.
+    differences: list[DifferenceRead]
 
 
-class SnapshotDetail(SnapshotRead):
-    raw: str | None
+class SnapshotPageRead(BaseModel):
+    model_config = _READ
+
+    # Newest first.
+    entries: list[SnapshotEntryRead]
+    # Pass as `before` for the next page; None on the last one.
+    next_before: str | None
+
+
+class SnapshotDetailRead(SnapshotEntryRead):
+    image: str | None
+    image_id: str | None
+    vllm_version: str | None
+    created_at: datetime | None
+    started_at: datetime | None
+    restart_count: int | None
+    # The rebuilt `docker run`, secrets as placeholders; None on removed entries.
+    command: str | None
+    # Which options the command covers.
+    covers: str
+    # Set when docker compose started the container.
+    compose: str | None
+    # Set when the server's Docker could only send env names.
+    env_hidden: str | None
+    env_values_hidden: bool
+    key_fingerprint: str | None
+
+
+class SnapshotCompareRead(BaseModel):
+    model_config = _READ
+
+    # The older of the two, by when each happened.
+    from_snapshot: SnapshotDetailRead
+    to_snapshot: SnapshotDetailRead
+    differences: list[DifferenceRead]
+
+
+class CheckKeyRequest(BaseModel):
+    key: str = Field(max_length=4096)
+
+
+class CheckKeyRead(BaseModel):
+    model_config = _READ
+
+    # None when it can't be checked; `reason` says why.
+    matches: bool | None
+    reason: str | None

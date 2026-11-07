@@ -46,6 +46,20 @@ class WatchedInstanceRead(BaseModel):
     usage: UsagePointRead | None
     # Running requests over the kept history, oldest first.
     running_trend: list[float | None]
+    # When its latest snapshot was a recreation or change; None when it's first seen (or unknown).
+    changed_at: datetime | None = None
+
+
+class RemovedInstanceRead(BaseModel):
+    """A container noticed removed in the last 7 days. Its snapshots are kept."""
+
+    model_config = _READ
+
+    name: str
+    image: str | None
+    model: str | None
+    last_seen: datetime
+    removed_at: datetime
 
 
 class GpuRead(BaseModel):
@@ -75,6 +89,8 @@ class ServerWatchRead(BaseModel):
     read_at: datetime | None
     # Sorted by name.
     instances: list[WatchedInstanceRead]
+    # Removed in the last 7 days and not back since, newest first.
+    removed: list[RemovedInstanceRead] = []
     # None when nvidia-smi isn't available (gpu_message says why) or hasn't run yet.
     gpus: list[GpuRead] | None
     gpu_message: str | None

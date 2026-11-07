@@ -3,6 +3,7 @@
 import asyncio
 import json
 import threading
+import time
 from collections.abc import Awaitable, Callable, Coroutine
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -187,17 +188,37 @@ def _state(status: str = "running", exit_code: int = 0, oom_killed: bool = False
             "StartedAt": "2026-10-29T08:00:00.123456789Z", "FinishedAt": "0001-01-01T00:00:00Z"}
 
 
+# The HostConfig fields INSPECT_FORMAT sends under "host", as Docker reports a plain `docker run`.
+DEFAULT_HOST = {
+    "port_bindings": {"8001/tcp": [{"HostIp": "", "HostPort": "18001"}]},
+    "ipc_mode": "private", "pid_mode": "", "shm_size": 67108864,
+    "restart_policy": {"Name": "no", "MaximumRetryCount": 0}, "runtime": "runc",
+    "ulimits": None, "devices": None, "privileged": False, "cap_add": None, "cap_drop": None,
+}
+
+_LLAMA_ARGS = ["serve", "meta-llama/Llama-3.1-8B-Instruct", "--port", "8001", "--max-model-len", "32768"]
+
+
 def inspect_line(**fields: object) -> str:
     """One line of `docker inspect --format INSPECT_FORMAT`; fields override the vllm-llama defaults."""
     line = {
+        "id": "4ab1e07c9d10" + "0" * 52, "created": "2026-11-07T14:32:00.500000123Z", "image_id": "sha256:" + "b" * 64,
         "name": "/vllm-llama", "image": "vllm/vllm-openai:v0.11.0", "path": "vllm",
-        "args": ["serve", "meta-llama/Llama-3.1-8B-Instruct", "--port", "8001", "--max-model-len", "32768"],
+        "args": _LLAMA_ARGS, "entrypoint": ["vllm"], "cmd": _LLAMA_ARGS,
         "state": _state(), "restart_count": 0, "network_mode": "bridge",
         "ports": {"8001/tcp": [{"HostIp": "0.0.0.0", "HostPort": "18001"}]},
         "networks": {"bridge": {"IPAddress": "172.17.0.2", "Gateway": "172.17.0.1"}},
         "device_requests": [{"Driver": "", "Count": 0, "DeviceIDs": ["0", "1"], "Capabilities": [["gpu"]]}],
+        "host": DEFAULT_HOST, "mounts": [], "user": "", "workdir": "",
+        "compose": {"project": "", "working_dir": "", "config_files": ""},
         "env": [None],
     }
+    return json.dumps(line | fields)
+
+
+def image_line(**fields: object) -> str:
+    """One line of `docker inspect --type image --format IMAGE_FORMAT`."""
+    line = {"id": "sha256:" + "b" * 64, "entrypoint": ["vllm"], "cmd": None, "user": "", "workdir": "", "env": [None]}
     return json.dumps(line | fields)
 
 
@@ -321,21 +342,60 @@ class FakeVLLM:
         self._server.server_close()
 
 
-def docker_host(vllm: FakeVLLM, *, sudo_password: str) -> Commands:
-    """Answers like a GPU server where docker needs sudo with a password: one vLLM container on
-    the host network (its port is `vllm`'s, so port forwards reach it), plus nginx."""
-    ps = "\n".join(json.dumps(row) for row in [
-        {"Names": "vllm-llama", "Image": "vllm/vllm-openai:v0.11.0", "State": "running",
-         "Command": f'"vllm serve {MODEL} --port {vllm.port}"'},
-        {"Names": "nginx", "Image": "nginx:1.27", "State": "running", "Command": '"nginx -g daemon off;"'},
-    ]) + "\n"
-    inspect = inspect_line(
-        args=["serve", MODEL, "--port", str(vllm.port)], network_mode="host", ports={}, networks={"host": {}},
-        device_requests=[{"Count": 0, "DeviceIDs": ["0"], "Capabilities": [["gpu"]]}],
-        env=[f"VLLM_API_KEY={VLLM_API_KEY}", "HF_TOKEN=hf_secret", None],
-    ) + "\n"
+# The server body tests create servers with; tests that connect replace host and port.
+SERVER_BODY = {"name": "gpu-7", "host": "127.0.0.1", "port": 22, "username": "ubuntu",
+               "auth_type": "password", "password": "ssh-pw"}
 
-    def answer(command: str, stdin: str) -> tuple[str, str, int]:
+
+def wait_for(get: Callable[[], Any], predicate: Callable[[Any], bool], timeout: float = 10.0) -> Any:
+    deadline = time.monotonic() + timeout
+    value = None
+    while time.monotonic() < deadline:
+        if predicate(value := get()):
+            return value
+        time.sleep(0.05)
+    raise AssertionError(f"timed out; last value: {value}")
+
+
+def watched_server(api: TestClient, w: str, host: FakeSSHD) -> int:
+    """A server on `host`, tested so its host key is recorded and the watcher wakes for it."""
+    server_id = api.post(f"{w}/servers", json=SERVER_BODY | {"host": host.host, "port": host.port}).json()["id"]
+    assert api.post(f"{w}/servers/{server_id}/test").json()["ok"]
+    return server_id
+
+
+class DockerHost:
+    """Answers like a GPU server where docker needs sudo with a password: one vLLM container on
+    the host network (its port is `vllm`'s, so port forwards reach it), plus nginx. Tests change
+    `ps` and `inspect` as they go; `ps` set to None makes `docker ps` fail."""
+
+    def __init__(self, vllm: FakeVLLM, sudo_password: str) -> None:
+        self._vllm = vllm
+        self._sudo_password = sudo_password
+        self.ps: str | None = "\n".join(json.dumps(row) for row in [
+            {"Names": "vllm-llama", "Image": "vllm/vllm-openai:v0.11.0", "State": "running",
+             "Command": f'"vllm serve {MODEL} --port {vllm.port}"'},
+            {"Names": "nginx", "Image": "nginx:1.27", "State": "running", "Command": '"nginx -g daemon off;"'},
+        ]) + "\n"
+        self.inspect = self._inspect_line()
+        # `docker inspect --type image` fails this many more times; and how often it was asked.
+        self.image_failures = 0
+        self.image_inspects = 0
+
+    def _inspect_line(self, **fields: object) -> str:
+        args = ["serve", MODEL, "--port", str(self._vllm.port)]
+        return inspect_line(**({
+            "args": args, "cmd": args, "network_mode": "host", "ports": {}, "networks": {"host": {}},
+            "device_requests": [{"Count": 0, "DeviceIDs": ["0"], "Capabilities": [["gpu"]]}],
+            "env": [f"VLLM_API_KEY={VLLM_API_KEY}", "HF_TOKEN=hf_secret", None],
+        } | fields)) + "\n"
+
+    def relaunch(self, container_id: str, *extra_args: str) -> None:
+        """The container recreated with a new ID and these extra arguments."""
+        args = ["serve", MODEL, "--port", str(self._vllm.port), *extra_args]
+        self.inspect = self._inspect_line(id=container_id, args=args, cmd=args)
+
+    def __call__(self, command: str, stdin: str) -> tuple[str, str, int]:
         if command == "hostname":
             return "gpu-7\n", "", 0
         if command.startswith("docker "):
@@ -343,15 +403,25 @@ def docker_host(vllm: FakeVLLM, *, sudo_password: str) -> Commands:
         if command.startswith("sudo -n "):
             return "", "sudo: a password is required\n", 1
         if command.startswith("sudo -S "):
-            if stdin != sudo_password + "\n":
+            if stdin != self._sudo_password + "\n":
                 return "", "Sorry, try again.\nsudo: 1 incorrect password attempt\n", 1
             args = command.split(" docker ", 1)[1]
             if args.startswith("ps "):
-                return ps, "", 0
+                if self.ps is None:
+                    return "", "Cannot connect to the Docker daemon at unix:///var/run/docker.sock.\n", 1
+                return self.ps, "", 0
+            if args.startswith("inspect --type image "):
+                self.image_inspects += 1
+                if self.image_failures > 0:
+                    self.image_failures -= 1
+                    return "", "Error response from daemon: context deadline exceeded\n", 1
+                return image_line() + "\n", "", 0
             if args.startswith("inspect "):
-                return inspect, "", 0
+                return self.inspect, "", 0
         if command.startswith("nvidia-smi "):
             return NVIDIA_SMI_OUTPUT, "", 0
         return "", f"bash: {command.split()[0]}: command not found\n", 127
 
-    return answer
+
+def docker_host(vllm: FakeVLLM, *, sudo_password: str) -> DockerHost:
+    return DockerHost(vllm, sudo_password)

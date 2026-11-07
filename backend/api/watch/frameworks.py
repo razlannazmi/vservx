@@ -8,7 +8,29 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cache
-from typing import Protocol
+from typing import Any, Protocol
+
+
+@dataclass(frozen=True)
+class RawLaunch:
+    """How Docker says a container was launched, as read for snapshots. Holds no secret values."""
+
+    # Config.Entrypoint and Config.Cmd; None when Docker gives none.
+    entrypoint: tuple[str, ...] | None
+    # May hold --api-key, so it's masked before it's stored and never shown or logged.
+    cmd: tuple[str, ...] | None
+    # Sorted, each "K=V", or "K" when the value was withheld (a secret, or a Docker too old to filter).
+    env: tuple[str, ...]
+    # port_bindings, ipc_mode, pid_mode, shm_size, restart_policy, runtime, ulimits, devices,
+    # privileged, cap_add, cap_drop and device_requests: those HostConfig fields, as Docker gives them.
+    host: Mapping[str, Any]
+    mounts: tuple[Mapping[str, Any], ...]
+    user: str
+    workdir: str
+    # project, working_dir, config_files: docker compose's labels, "" when absent.
+    compose: Mapping[str, str]
+    # True when the server's Docker could only send env names.
+    env_values_hidden: bool
 
 
 @dataclass(frozen=True)
@@ -36,6 +58,12 @@ class Container:
     gpus: list[str] | None
     # Only VLLM_API_KEY and NVIDIA_VISIBLE_DEVICES; nothing else from the environment is kept.
     env: dict[str, str] = field(repr=False)
+    # Docker's full container ID, Created time and image ID (sha256:…).
+    id: str = ""
+    created_at: datetime | None = None
+    image_id: str = ""
+    # The launch settings snapshots are made from; None when Docker didn't send them.
+    launch: RawLaunch | None = field(default=None, repr=False)
 
 
 @dataclass(frozen=True)

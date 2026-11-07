@@ -110,6 +110,25 @@ class SignInLimits:
         self._sign_ups.add(ip)
 
 
+KEY_CHECK_WINDOW = 60.0
+KEY_CHECKS_PER_MINUTE = 10
+
+
+class KeyCheckLimits:
+    """Check a key, at most 10 a minute per user, so a viewer can't use it to guess an API key.
+    Every check counts, matches included."""
+
+    def __init__(self, *, per_minute: int = KEY_CHECKS_PER_MINUTE, clock: Clock = time.monotonic) -> None:
+        self._checks = Attempts(per_minute, KEY_CHECK_WINDOW, clock)
+
+    def attempt(self, user_id: int) -> None:
+        key = str(user_id)
+        wait = self._checks.wait(key)
+        if wait > 0:
+            raise _too_many("key checks", wait)
+        self._checks.add(key)
+
+
 def client_ip(request: Request) -> str:
     # Behind a reverse proxy this is the proxy's address, unless uvicorn trusts its
     # X-Forwarded-For (the FORWARDED_ALLOW_IPS environment variable).
@@ -121,3 +140,10 @@ def _sign_in_limits(request: Request) -> SignInLimits:
 
 
 SignInLimitsDep = Annotated[SignInLimits, Depends(_sign_in_limits)]
+
+
+def _key_check_limits(request: Request) -> KeyCheckLimits:
+    return request.app.state.key_check_limits
+
+
+KeyCheckLimitsDep = Annotated[KeyCheckLimits, Depends(_key_check_limits)]

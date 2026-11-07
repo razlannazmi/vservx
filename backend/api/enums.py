@@ -17,12 +17,6 @@ class ConnectionFailure(StrEnum):
     ERROR = "error"
 
 
-class LaunchType(StrEnum):
-    DOCKER = "docker"
-    SYSTEMD = "systemd"
-    BARE = "bare"
-
-
 class UserRole(StrEnum):
     """App-wide role. What someone may do inside a workspace is their WorkspaceRole there."""
 
@@ -51,10 +45,14 @@ class DatabaseState(StrEnum):
     NEWER_THAN_APP = "newer_than_app"
 
 
-class SnapshotTrigger(StrEnum):
-    DISCOVERY = "discovery"
-    PRE_STOP = "pre-stop"
-    MANUAL = "manual"
+class SnapshotKind(StrEnum):
+    """What a snapshot records about its instance."""
+
+    FIRST_SEEN = "first_seen"
+    RECREATED = "recreated"
+    RECREATED_SAME = "recreated_same"
+    CHANGED = "changed"
+    REMOVED = "removed"
 
 
 class WatchState(StrEnum):

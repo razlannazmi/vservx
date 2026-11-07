@@ -1,4 +1,5 @@
 <script lang="ts">
+  import HistoryIcon from "@lucide/svelte/icons/history";
   import { tick, untrack } from "svelte";
   import { toast } from "svelte-sonner";
   import { fade, slide } from "svelte/transition";
@@ -8,12 +9,14 @@
   import GpuStrip from "$lib/components/GpuStrip.svelte";
   import InstanceDetails from "$lib/components/InstanceDetails.svelte";
   import InstanceTable from "$lib/components/InstanceTable.svelte";
+  import SnapshotDrawer from "$lib/components/SnapshotDrawer.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
-  import { clockTime, secondsAgo } from "$lib/format";
+  import { clockTime, localDateTime, secondsAgo } from "$lib/format";
   import { duration, easeOut } from "$lib/motion";
   import { every } from "$lib/poll";
-  import { navigate } from "$lib/router.svelte";
+  import { navigate, router } from "$lib/router.svelte";
   import { serverStatus, TONE_DOT, type Tone } from "$lib/servers";
+  import { drawerSearch, readDrawer, type DrawerState } from "$lib/snapshots";
   import { HISTORY_MINUTES, WATCH_POLL_MS } from "$lib/watch";
 
   let {
@@ -44,15 +47,41 @@
   // Connection details follow the server's state until someone opens or closes them.
   let detailsChosen = $state<boolean | null>(null);
 
+  // The snapshots drawer, kept in the query string so a link can open it.
+  let drawer = $state<DrawerState | null>(readDrawer(location.search));
+
   const watched = $derived(!server.jump_only);
   const connected = $derived(view?.state === "connected");
-  // The instance in the address, or the first one that isn't folded away as stopped.
-  const selected = $derived(
-    view?.instances.find((each) => each.name === instance) ??
-      view?.instances.find((each) => each.state !== "stopped") ??
-      view?.instances[0] ??
-      null,
-  );
+  // A container removed in the last 7 days, when the address names one.
+  const selectedRemoved = $derived(view?.removed.find((each) => each.name === instance) ?? null);
+  // The instance in the address, or (unless it names a removed one) the first that isn't folded away as stopped.
+  const selected = $derived.by(() => {
+    if (!view) return null;
+    const named = view.instances.find((each) => each.name === instance);
+    if (named || selectedRemoved) return named ?? null;
+    return view.instances.find((each) => each.state !== "stopped") ?? view.instances[0] ?? null;
+  });
+  const selectedName = $derived(selected?.name ?? selectedRemoved?.name ?? null);
+
+  $effect(() => {
+    const search = drawerSearch(drawer);
+    void router.path;
+    untrack(() => {
+      if (location.search !== search) history.replaceState(null, "", location.pathname + search);
+    });
+  });
+
+  // Another server's page starts with the drawer closed.
+  let drawerServer = untrack(() => server.id);
+  $effect(() => {
+    const serverId = server.id;
+    untrack(() => {
+      if (serverId !== drawerServer) {
+        drawerServer = serverId;
+        drawer = null;
+      }
+    });
+  });
   const detailsOpen = $derived(
     detailsChosen ??
       (server.jump_only ||
@@ -99,10 +128,11 @@
     return untrack(() => every(WATCH_POLL_MS, () => loadView(serverId)));
   });
 
-  // An address naming a container the server no longer has falls back to the server, once it's been looked at.
+  // An address naming a container the server no longer has falls back to the server, once it's been
+  // looked at. A container removed in the last 7 days keeps its address.
   $effect(() => {
     if (!view?.found_at || instance === null) return;
-    if (!view.instances.some((each) => each.name === instance)) {
+    if (!view.instances.some((each) => each.name === instance) && !view.removed.some((each) => each.name === instance)) {
       navigate(`${base}/servers/${server.id}`, { replace: true });
     }
   });
@@ -156,6 +186,13 @@
         {#if watched}
           <Button size="sm" variant="outline" onclick={refresh} disabled={refreshing}>
             {refreshing ? "Refreshing…" : "Refresh"}
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            onclick={() => (drawer = { view: "server", instance: selectedName, at: null, compare: null })}
+          >
+            <HistoryIcon aria-hidden="true" />Snapshots
           </Button>
         {/if}
         {#if operator}
@@ -224,12 +261,14 @@
               last read {clockTime((current.read_at ?? current.found_at) as string)}
             {/if}
           {/snippet}
-          {#if current.instances.length > 0}
+          {#if current.instances.length > 0 || current.removed.length > 0}
             <InstanceTable
               instances={current.instances}
-              selected={selected?.name ?? null}
+              removed={current.removed}
+              selected={selectedName}
               hrefFor={instanceHref}
               onpick={showInstance}
+              onsnapshots={(name) => (drawer = { view: "instance", instance: name, at: null, compare: null })}
             />
           {:else}
             <p class="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
@@ -245,6 +284,12 @@
             {/snippet}
             <InstanceDetails {workspaceId} serverId={server.id} instance={selected} />
           </CollapsibleSection>
+        {:else if selectedRemoved}
+          <CollapsibleSection id="instance" title={`Instance · ${selectedRemoved.name}`}>
+            <p class="text-sm text-muted-foreground">
+              Removed · last seen {localDateTime(selectedRemoved.last_seen)}. Its last launch command is under Snapshots.
+            </p>
+          </CollapsibleSection>
         {/if}
       {:else if current.state === "not_tested"}
         <p class="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
@@ -258,3 +303,15 @@
     </div>
   {/if}
 </article>
+
+{#if drawer}
+  <SnapshotDrawer
+    {workspaceId}
+    serverId={server.id}
+    serverName={server.name}
+    pageInstance={selectedName}
+    {drawer}
+    onchange={(next) => (drawer = next)}
+    onclose={() => (drawer = null)}
+  />
+{/if}

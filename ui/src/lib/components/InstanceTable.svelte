@@ -1,12 +1,14 @@
 <script lang="ts">
+  import HistoryIcon from "@lucide/svelte/icons/history";
   import { untrack } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
-  import type { InstanceState, WatchedInstanceRead } from "$lib/api/client";
+  import type { InstanceState, RemovedInstanceRead, WatchedInstanceRead } from "$lib/api/client";
   import Sparkline from "$lib/components/Sparkline.svelte";
   import { Input } from "$lib/components/ui/input/index.js";
   import { FLASH_HOLD_MS } from "$lib/motion";
   import { followLink } from "$lib/router.svelte";
   import { TONE_DOT, TONE_FLASH } from "$lib/servers";
+  import { changedLabel } from "$lib/snapshots";
   import {
     changedStates,
     formatNumber,
@@ -25,16 +27,21 @@
 
   // One row per container, in the order given (by name), each a link to that instance.
   // Stopped ones fold away, long lists get a search and state chips, and the rows scroll inside a capped height.
+  // Containers removed in the last 7 days stay as greyed rows, folded and filtered like stopped ones.
   let {
     instances,
+    removed = [],
     selected,
     hrefFor,
     onpick,
+    onsnapshots,
   }: {
     instances: WatchedInstanceRead[];
+    removed?: RemovedInstanceRead[];
     selected: string | null;
     hrefFor: (name: string) => string;
     onpick?: (name: string) => void;
+    onsnapshots: (name: string) => void;
   } = $props();
 
   let query = $state("");
@@ -44,29 +51,60 @@
   let scroller = $state<HTMLDivElement | null>(null);
   let header = $state<HTMLDivElement | null>(null);
 
-  const filterable = $derived(instances.length >= INSTANCE_FILTER_FROM);
+  const total = $derived(instances.length + removed.length);
+  const filterable = $derived(total >= INSTANCE_FILTER_FROM);
   // The search and chips only count while they're on screen.
   const activeQuery = $derived(filterable ? query.trim() : "");
   const activeFilter = $derived<InstanceFilter>(filterable ? filter : "all");
+  // Removed rows count with stopped ones (and all).
   const counts = $derived(
     Object.fromEntries(
-      INSTANCE_FILTERS.map(([value]) => [value, instances.filter((each) => matchesFilter(each, value)).length]),
+      INSTANCE_FILTERS.map(([value]) => [
+        value,
+        instances.filter((each) => matchesFilter(each, value)).length +
+          (value === "all" || value === "stopped" ? removed.length : 0),
+      ]),
     ) as Record<InstanceFilter, number>,
   );
   const showStopped = $derived(
     stoppedChosen ??
-      (instances.find((each) => each.name === selected)?.state === "stopped" || counts.stopped === instances.length),
+      (instances.find((each) => each.name === selected)?.state === "stopped" ||
+        removed.some((each) => each.name === selected) ||
+        counts.stopped === total),
   );
   // Searching or picking a chip looks through the stopped ones too, so the fold only applies to the plain list.
   const folding = $derived(activeFilter === "all" && activeQuery === "");
+  type Row = { removed: false; instance: WatchedInstanceRead } | { removed: true; instance: RemovedInstanceRead };
   const rows = $derived(
-    instances.filter(
-      (each) =>
-        matchesFilter(each, activeFilter) &&
-        matchesQuery(each, activeQuery) &&
-        (!folding || showStopped || each.state !== "stopped"),
-    ),
+    [
+      ...instances
+        .filter(
+          (each) =>
+            matchesFilter(each, activeFilter) &&
+            matchesQuery(each, activeQuery) &&
+            (!folding || showStopped || each.state !== "stopped"),
+        )
+        .map((instance): Row => ({ removed: false, instance })),
+      ...removed
+        .filter(
+          (each) =>
+            (activeFilter === "all" || activeFilter === "stopped") &&
+            matchesRemoved(each, activeQuery) &&
+            (!folding || showStopped),
+        )
+        .map((instance): Row => ({ removed: true, instance })),
+    ].sort((a, b) => (a.instance.name < b.instance.name ? -1 : a.instance.name > b.instance.name ? 1 : 0)),
   );
+
+  // A removed container has no port: it's found by name or model.
+  function matchesRemoved(each: RemovedInstanceRead, words: string): boolean {
+    const text = `${each.name} ${each.model ?? ""}`.toLowerCase();
+    return words.toLowerCase().split(/\s+/).filter(Boolean).every((word) => text.includes(word));
+  }
+
+  function dayMonth(iso: string): string {
+    return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+  }
 
   const cell = "px-2 py-2 whitespace-nowrap";
   const number = `${cell} text-right font-mono tabular-nums`;
@@ -163,8 +201,8 @@
   <!-- The query box sits inside the scroller so its width leaves out the scrollbar. -->
   <div class="@container">
     <div
-      class="grid min-w-[45rem] grid-cols-[auto_minmax(7rem,1fr)_minmax(7rem,1.5fr)_auto_minmax(4rem,10rem)_auto_auto_auto_auto] text-xs
-             @min-[50rem]:grid-cols-[auto_minmax(7rem,1fr)_minmax(7rem,1.5fr)_auto_minmax(4rem,10rem)_auto_auto_auto_auto_auto]"
+      class="grid min-w-[45rem] grid-cols-[auto_minmax(7rem,1fr)_minmax(7rem,1.5fr)_auto_minmax(4rem,10rem)_auto_auto_auto_auto_auto] text-xs
+             @min-[50rem]:grid-cols-[auto_minmax(7rem,1fr)_minmax(7rem,1.5fr)_auto_minmax(4rem,10rem)_auto_auto_auto_auto_auto_auto]"
     >
       <div
         bind:this={header}
@@ -181,15 +219,42 @@
         <span class="px-2 py-1.5 text-right">KV cache</span>
         <span class="px-2 py-1.5 text-right">Tok/s out</span>
         <span class="px-2 py-1.5 text-right">First token</span>
+        <span></span>
       </div>
-      {#each rows as instance (instance.name)}
+      {#each rows as row (row.instance.name)}
+        {@const current = row.instance.name === selected}
+        {#if row.removed}
+          {@const gone = row.instance}
+          <a
+            href={hrefFor(gone.name)}
+            onclick={(event) => pick(event, gone.name)}
+            aria-current={current ? "true" : undefined}
+            class="col-[1/-2] grid grid-cols-subgrid items-center border-b text-muted-foreground outline-none
+                   hover:bg-muted focus-visible:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset
+                   {current ? 'bg-muted shadow-[inset_2px_0_0_var(--foreground)]' : ''}"
+          >
+            <span class="{cell} flex items-center gap-1.5">
+              <span class="size-2 shrink-0 rounded-full {TONE_DOT.none}" aria-hidden="true"></span>
+              Removed · {dayMonth(gone.removed_at)}
+            </span>
+            <span class="{cell} truncate font-mono font-semibold opacity-70">{gone.name}</span>
+            <span class="{cell} truncate font-mono opacity-70" title={gone.model ?? undefined}>{shortModel(gone.model)}</span>
+            <span class={cell}>—</span>
+            <span class={cell}>—</span>
+            <span class="{cell} hidden @min-[50rem]:block">—</span>
+            {#each { length: 4 }, i (i)}
+              <span class={number}>—</span>
+            {/each}
+          </a>
+        {:else}
+        {@const instance = row.instance}
         {@const usage = instance.state === "ready" ? instance.usage : null}
-        {@const current = instance.name === selected}
+        {@const tag = changedLabel(instance.changed_at)}
         <a
           href={hrefFor(instance.name)}
           onclick={(event) => pick(event, instance.name)}
           aria-current={current ? "true" : undefined}
-          class="relative isolate col-span-full grid grid-cols-subgrid items-center border-b outline-none
+          class="relative isolate col-[1/-2] grid grid-cols-subgrid items-center border-b outline-none
                  before:pointer-events-none before:absolute before:inset-0 before:-z-10
                  {TONE_FLASH[INSTANCE_TONE[instance.state]]}
                  {flashing.has(instance.name) ? 'before:opacity-100' : 'before:opacity-0 before:transition-opacity before:duration-250 before:ease-out'}
@@ -204,7 +269,12 @@
             ></span>
             {INSTANCE_WORDS[instance.state]}
           </span>
-          <span class="{cell} truncate font-mono font-semibold">{instance.name}</span>
+          <span class="{cell} flex min-w-0 items-center gap-1.5">
+            <span class="truncate font-mono font-semibold">{instance.name}</span>
+            {#if tag}
+              <span class="shrink-0 rounded-sm border border-status-warn px-1 text-[0.625rem] leading-4 text-status-warn">{tag}</span>
+            {/if}
+          </span>
           <span class="{cell} truncate font-mono" title={instance.model ?? undefined}>{shortModel(instance.model)}</span>
           <span class="{cell} font-mono tabular-nums">{instance.port}</span>
           <span class="{cell} truncate font-mono tabular-nums" title={instance.gpus?.join(", ") || undefined}>{gpuLabel(instance.gpus)}</span>
@@ -226,6 +296,20 @@
             {/each}
           {/if}
         </a>
+        {/if}
+        <!-- A sibling of the row's link, never inside it: a button can't sit in a link. -->
+        <span class="col-[-2/-1] flex h-full items-center border-b px-1 {current ? 'bg-muted' : ''}">
+          <button
+            type="button"
+            aria-label={`Snapshots of ${row.instance.name}`}
+            title={`Snapshots of ${row.instance.name}`}
+            onclick={() => onsnapshots(row.instance.name)}
+            class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground outline-none
+                   hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+          >
+            <HistoryIcon class="size-3.5" aria-hidden="true" />
+          </button>
+        </span>
       {/each}
     </div>
   </div>
@@ -243,7 +327,7 @@
   {/if}
 </div>
 
-{#if folding && counts.stopped > 0 && counts.stopped < instances.length}
+{#if folding && counts.stopped > 0 && counts.stopped < total}
   <button
     type="button"
     class="mt-2 rounded-sm text-xs text-muted-foreground underline underline-offset-4 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"

@@ -186,3 +186,12 @@ def outsider_headers(client: TestClient, add_user: Callable[..., None]) -> dict[
     """An account that belongs to no workspace."""
     add_user("outsider@example.com")
     return login_headers(client, "outsider@example.com", USER_PASSWORD)
+
+
+@pytest.fixture
+def watching(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Turn the watcher on with fast rounds. List it before `client` in a test's arguments."""
+    for name, value in {"VSERVX_WATCH_ENABLED": "true", "VSERVX_USAGE_INTERVAL_SECONDS": "0.1",
+                        "VSERVX_DISCOVERY_INTERVAL_SECONDS": "0.3", "VSERVX_SSH_CONNECT_TIMEOUT": "2"}.items():
+        monkeypatch.setenv(name, value)
+    get_settings.cache_clear()
