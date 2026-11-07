@@ -163,8 +163,8 @@
   <!-- The query box sits inside the scroller so its width leaves out the scrollbar. -->
   <div class="@container">
     <div
-      class="grid min-w-[45rem] grid-cols-[auto_minmax(7rem,1fr)_minmax(7rem,1.5fr)_auto_auto_auto_auto_auto_auto] text-xs
-             @min-[50rem]:grid-cols-[auto_minmax(7rem,1fr)_minmax(7rem,1.5fr)_auto_auto_auto_auto_auto_auto_auto]"
+      class="grid min-w-[45rem] grid-cols-[auto_minmax(7rem,1fr)_minmax(7rem,1.5fr)_auto_minmax(4rem,10rem)_auto_auto_auto_auto] text-xs
+             @min-[50rem]:grid-cols-[auto_minmax(7rem,1fr)_minmax(7rem,1.5fr)_auto_minmax(4rem,10rem)_auto_auto_auto_auto_auto]"
     >
       <div
         bind:this={header}
@@ -207,7 +207,7 @@
           <span class="{cell} truncate font-mono font-semibold">{instance.name}</span>
           <span class="{cell} truncate font-mono" title={instance.model ?? undefined}>{shortModel(instance.model)}</span>
           <span class="{cell} font-mono tabular-nums">{instance.port}</span>
-          <span class="{cell} font-mono tabular-nums">{gpuLabel(instance.gpus)}</span>
+          <span class="{cell} truncate font-mono tabular-nums" title={instance.gpus?.join(", ") || undefined}>{gpuLabel(instance.gpus)}</span>
           <span class="{cell} hidden @min-[50rem]:block">
             {#if usage}
               <Sparkline values={instance.running_trend} />
