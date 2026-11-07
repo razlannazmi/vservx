@@ -7,6 +7,7 @@ import {
   type WatchSummaryRead,
 } from "./api/client";
 import { clockTime } from "./format";
+import { CHAIN_LOOP_MS, CHAIN_STEPS, chainScene, containerStep, HOPS, hopStep, untilNextChange } from "./hops";
 import { easeInOut, easeOut } from "./motion";
 import { serverStatus } from "./servers";
 import { slugify, withSlugs } from "./slug";
@@ -141,6 +142,20 @@ test("motion curves match their CSS cubic-beziers", () => {
   expect(easeInOut(0.25)).toBeCloseTo(0.0529, 3);
   expect(easeInOut(0.5)).toBeCloseTo(0.596, 3);
   expect(easeInOut(0.75)).toBeCloseTo(0.9563, 3);
+});
+
+test("the sign-in chain lights one thing at a time, fades, then starts over", () => {
+  // Every moment the timer wakes for, across one loop.
+  const seen = [];
+  for (let t = 0; t < CHAIN_LOOP_MS; t += untilNextChange(t)) seen.push(chainScene(t));
+  expect(seen).toEqual([
+    { lit: 0, shown: false },
+    ...Array.from({ length: CHAIN_STEPS + 1 }, (_, lit) => ({ lit, shown: true })),
+    { lit: CHAIN_STEPS, shown: false },
+  ]);
+  expect(chainScene(CHAIN_LOOP_MS + 1)).toEqual(chainScene(1));
+  // The containers turn up only once the last hop has lit.
+  expect(containerStep(0)).toBeGreaterThan(hopStep(HOPS.length - 1));
 });
 
 test("only an instance whose state changed since the last poll flashes", () => {

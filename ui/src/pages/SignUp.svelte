@@ -1,5 +1,6 @@
 <script lang="ts">
   import { api, errorMessage } from "$lib/api/client";
+  import AuthLayout from "$lib/components/AuthLayout.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import { Label } from "$lib/components/ui/label/index.js";
@@ -28,10 +29,9 @@
   }
 </script>
 
-<div class="flex min-h-svh items-center justify-center p-6">
+<AuthLayout>
   <div class="w-full max-w-sm space-y-6">
     <div class="space-y-1.5">
-      <p class="font-mono text-sm text-muted-foreground">vservx</p>
       <h1 class="text-2xl font-semibold tracking-tight">Create an account</h1>
     </div>
 
@@ -71,4 +71,4 @@
       </form>
     {/if}
   </div>
-</div>
+</AuthLayout>

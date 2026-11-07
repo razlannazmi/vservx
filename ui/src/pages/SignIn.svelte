@@ -1,4 +1,5 @@
 <script lang="ts">
+  import AuthLayout from "$lib/components/AuthLayout.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import { Label } from "$lib/components/ui/label/index.js";
@@ -23,10 +24,9 @@
   }
 </script>
 
-<div class="flex min-h-svh items-center justify-center p-6">
+<AuthLayout>
   <form class="w-full max-w-sm space-y-6" onsubmit={submit}>
     <div class="space-y-1.5">
-      <p class="font-mono text-sm text-muted-foreground">vservx</p>
       <h1 class="text-2xl font-semibold tracking-tight">Sign in</h1>
       {#if note}
         <p class="text-sm text-muted-foreground">{note}</p>
@@ -57,4 +57,4 @@
       </p>
     {/if}
   </form>
-</div>
+</AuthLayout>
