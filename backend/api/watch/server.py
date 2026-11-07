@@ -39,6 +39,9 @@ RECONNECT_FIRST = 10.0
 RECONNECT_MAX = 300.0
 # Refresh looks for instances at most this often.
 REFRESH_GAP = timedelta(seconds=5)
+# Instances read at the same moment on one server. Read through curl, each is an SSH session,
+# and sshd allows 10 per connection by default (MaxSessions).
+PROBES_AT_ONCE = 4
 NO_GPUS = "nvidia-smi isn't available on this server."
 
 # Docker answers that only a change to the server's settings can fix (which starts a new
@@ -187,9 +190,8 @@ class ServerWatch:
                    >= timedelta(seconds=self._settings.discovery_interval_seconds))
         if self._discovery_due or overdue:
             await self._discover(shell)
-        for instance in self._instances.values():
-            if instance.container.status == "running":
-                await self._probe(shell, instance)
+        await self._probe_all(shell, [instance for instance in self._instances.values()
+                                      if instance.container.status == "running"])
         await self._read_gpus(shell, retry=overdue)
         self._read_at = utcnow()
 
@@ -239,6 +241,24 @@ class ServerWatch:
         self._found_at = utcnow()
 
     # Reading usage
+
+    async def _probe_all(self, shell: Shell, instances: list[_Instance]) -> None:
+        """Read the instances side by side, so a few slow ones can't push the round past its time
+        limit and get the whole server called unreachable."""
+        at_once = asyncio.Semaphore(PROBES_AT_ONCE)
+
+        async def probe(instance: _Instance) -> None:
+            async with at_once:
+                await self._probe(shell, instance)
+
+        try:
+            async with asyncio.TaskGroup() as group:
+                for instance in instances:
+                    group.create_task(probe(instance))
+        except ExceptionGroup as failed:
+            # The connection broke under one of them, and the rest were cancelled: the round fails
+            # on that error, as it did when they were read one at a time.
+            raise failed.exceptions[0] from None
 
     async def _probe(self, shell: Shell, instance: _Instance) -> None:
         host, port = target(instance.container, instance.spec.port)

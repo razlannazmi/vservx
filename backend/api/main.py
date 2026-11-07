@@ -14,6 +14,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from api.auth.limits import SignInLimits
 from api.auth.tokens import init_tokens
 from api.config import get_settings
 from api.db.crypto import init_crypto
@@ -120,6 +121,7 @@ async def _validation_error_handler(request: Request, exc: Exception) -> JSONRes
 def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(title="vservx", version=__version__, lifespan=lifespan)
+    app.state.sign_in_limits = SignInLimits()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,

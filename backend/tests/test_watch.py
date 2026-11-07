@@ -16,7 +16,7 @@ from api.watch.frameworks import MetricSample, framework_for
 from api.schemas.watch import GpuRead, GpuTotalsRead, ServerCountsRead, ServerWatchRead, WatchedInstanceRead
 from api.watch.gpus import gpu_users, parse_gpus
 from api.watch.overview import workspace_overview
-from api.watch.server import ServerWatch, WatchConfig
+from api.watch.server import PROBES_AT_ONCE, ServerWatch, WatchConfig
 from api.watch.shell import CommandResult, _AnswerProgress, _response
 from api.watch.states import Probe, instance_state
 from api.watch.usage import UsageHistory
@@ -149,6 +149,27 @@ def test_http_answer_complete_once_all_in(answer: bytes) -> None:
         assert done and _response(bytes(raw)).body == "hello", read_size
     # Neither a length nor chunks: it ends only when the connection closes.
     assert not _AnswerProgress().complete(bytearray(b"HTTP/1.0 200 OK\r\n\r\nhello"))
+
+
+def test_instances_are_probed_side_by_side() -> None:
+    watch = ServerWatch(WatchConfig(server_id=1, hops=[], sudo_password=None), Settings(), asyncio.Semaphore(8), {})
+    running = most = 0
+
+    async def probe(shell: object, instance: str) -> None:
+        nonlocal running, most
+        running += 1
+        most = max(most, running)
+        await asyncio.sleep(0.05)
+        running -= 1
+        if instance == "lost":
+            raise OSError("The connection was lost")
+
+    watch._probe = probe  # type: ignore[method-assign]
+    asyncio.run(watch._probe_all(None, ["ok"] * 6))  # type: ignore[arg-type]
+    assert most == PROBES_AT_ONCE
+    # The error itself, not an ExceptionGroup, so the watch sees a lost connection as before.
+    with pytest.raises(OSError, match="connection was lost"):
+        asyncio.run(watch._probe_all(None, ["ok", "lost", "ok"]))  # type: ignore[arg-type]
 
 
 def _view(state: WatchState, docker: DockerStatus = DockerStatus.PLAIN, instances=(), gpus=None) -> ServerWatchRead:

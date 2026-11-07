@@ -69,7 +69,8 @@ Every 5 seconds vservx reads each ready instance's `/health` and Prometheus `/me
 - **Signing up:** anyone can ask for an account from the sign-in page. The account waits until an app admin approves it; signing in before then says "Your account is waiting for approval". Rejecting a sign-up deletes it.
 - **The sign-up switch:** an admin can close sign-up under Admin → Accounts. The sign-in page then has no "Create an account" link.
 - **Admin or member:** admins approve sign-ups, make or remove admins, disable accounts and set new passwords, see every workspace and change its owner, and run database upgrades. Everyone else is a member. vservx always keeps at least one active admin.
-- **Sessions:** signing in to the web app sets an HttpOnly session cookie that lasts 7 days (`VSERVX_ACCESS_TOKEN_MINUTES`). Changing your password signs out your other sessions. API clients can use the bearer token from `POST /api/auth/login` instead.
+- **Sessions:** signing in to the web app sets an HttpOnly session cookie that lasts 7 days (`VSERVX_ACCESS_TOKEN_MINUTES`). Changing your password signs out your other sessions, and Account → Sign out everywhere signs out all of them, this one included. API clients can use the bearer token from `POST /api/auth/login` instead.
+- **Password guessing:** after 20 failed sign-ins from one address within 15 minutes, or 100 for one email from any number of addresses, sign-in answers 429 until the oldest of them is 15 minutes old, without checking the password. Sign-up allows 5 requests per address per hour. The counts are kept in memory, so a restart clears them. Behind a reverse proxy, set `FORWARDED_ALLOW_IPS` to the proxy's address so uvicorn reads each client's address from `X-Forwarded-For`; otherwise every client counts as the proxy.
 
 ### Workspaces
 

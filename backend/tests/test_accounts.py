@@ -6,6 +6,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
+from api.auth.limits import SignInLimits
 from api.auth.tokens import create_access_token
 from api.config import get_settings
 from api.enums import UserRole
@@ -32,6 +33,19 @@ def test_login_failures_are_indistinguishable(client: TestClient) -> None:
     assert [r.status_code for r in responses] == [401, 401]
     # Same body every time, so a caller can't learn which emails have accounts.
     assert len({r.text for r in responses}) == 1
+
+
+def test_sign_in_and_sign_up_are_rate_limited(client: TestClient) -> None:
+    client.app.state.sign_in_limits = SignInLimits(failures_per_ip=3, sign_ups_per_ip=1)
+    # Sign-ins that work don't count.
+    assert {_login(client, ADMIN["email"], ADMIN["password"]).status_code for _ in range(4)} == {200}
+    assert [_login(client, "nobody@example.com", "wrong-password").status_code for _ in range(3)] == [401] * 3
+    # Refused before the password is checked, so even the right one waits.
+    refused = _login(client, ADMIN["email"], ADMIN["password"])
+    assert refused.status_code == 429 and int(refused.headers["retry-after"]) > 0
+    assert "Try again in 15 minutes" in refused.json()["detail"]
+    assert client.post("/api/auth/signup", json=NEW).status_code == 202
+    assert client.post("/api/auth/signup", json=NEW | {"email": "bea@example.com"}).status_code == 429
 
 
 def test_browser_session_cookie(client: TestClient) -> None:
