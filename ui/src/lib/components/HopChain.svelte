@@ -20,6 +20,8 @@
 
   const lit = (step: number) => (scene.lit > step ? "" : undefined);
   const last = HOPS.length - 1;
+  // Every name gets the longest name's width, so the notes after them line up in one column.
+  const nameWidth = `${Math.max(...HOPS.map((hop) => hop.name.length))}ch`;
 
   $effect(() => {
     if (prefersReducedMotion()) {
@@ -66,7 +68,7 @@
     ]}
   >
     <!-- Across the strip on narrow screens, down the half on wide ones. -->
-    <div class="flex w-full items-start font-mono lg:w-auto lg:flex-col">
+    <div class="flex w-full items-start font-code lg:w-auto lg:flex-col" style:--name-width={nameWidth}>
       {#each HOPS as hop, i (hop.name)}
         <div
           class="group relative flex flex-col items-center gap-2 text-[11px] text-foreground/35 transition-colors duration-250 data-lit:text-foreground lg:flex-row lg:gap-3 lg:text-sm"
@@ -75,7 +77,7 @@
           <span
             class="size-2.5 shrink-0 rounded-full border-[1.5px] border-foreground/25 bg-background transition-colors duration-250 group-data-lit:border-foreground group-data-lit:bg-foreground"
           ></span>
-          <span>{hop.name}</span>
+          <span class="lg:min-w-(--name-width)">{hop.name}</span>
           {#if hop.note}
             <span
               class="hidden text-xs text-muted-foreground opacity-0 transition-opacity duration-250 group-data-lit:opacity-100 lg:inline"
@@ -84,10 +86,10 @@
             </span>
           {/if}
           {#if i === last}
-            <ul class="absolute top-1/2 left-full ml-8 hidden -translate-y-1/2 flex-col gap-2 lg:flex">
+            <ul class="absolute top-1/2 left-full ml-14 hidden -translate-y-1/2 flex-col gap-3 lg:flex">
               {#each CONTAINERS as container, j (container.port)}
                 <li
-                  class="flex translate-y-1 items-center gap-2 rounded-md border px-2.5 py-1 text-xs whitespace-nowrap opacity-0 transition duration-250 ease-out data-lit:translate-y-0 data-lit:opacity-100"
+                  class="flex translate-y-1 items-center gap-2.5 rounded-md border px-3.5 py-2 text-xs whitespace-nowrap opacity-0 transition duration-250 ease-out data-lit:translate-y-0 data-lit:opacity-100"
                   data-lit={lit(containerStep(j))}
                 >
                   <span class="text-foreground">vllm :{container.port}</span>
@@ -114,7 +116,7 @@
   </div>
 
   <p class="absolute bottom-3 left-6 text-xs lg:bottom-6 lg:left-16">
-    <span class="font-mono text-muted-foreground">vservx</span>
+    <span class="font-code text-muted-foreground">vservx</span>
     <span class="hidden text-foreground/45 lg:inline">&ensp;Point it at a server, see your vLLMs.</span>
   </p>
 </div>

@@ -2,9 +2,10 @@
 
 import type { InstanceState, WorkspaceOverviewRead } from "$lib/api/client";
 import type { Tone } from "$lib/servers";
-import { gpuMemoryPercent, instanceLine, shortModel } from "$lib/watch";
+import { gpuMemoryPercent, INSTANCE_TONE, INSTANCE_WORDS, shortModel } from "$lib/watch";
 
-export type CardLine = { tone: Tone; label: string };
+/** How many are in one status, for a card row; `words` names the status, for hover and screen readers. */
+export type StatusCount = { tone: Tone; count: number; words: string };
 export type GpuLine = { label: string; memory: string | null; percent: number | null };
 
 export type OverviewCard = {
@@ -12,13 +13,15 @@ export type OverviewCard = {
   checking: boolean;
   /** No watched servers (or not in the overview yet: created since the last poll). */
   empty: boolean;
-  servers: CardLine | null;
-  instances: CardLine | null;
+  /** Both rows hold one count per tone, in `TONES` order, zeros included, so their columns line up. */
+  servers: StatusCount[] | null;
+  instances: StatusCount[] | null;
   gpus: GpuLine | null;
   models: string | null;
 };
 
 const NO_LINES = { servers: null, instances: null, gpus: null, models: null };
+const TONES: readonly Tone[] = ["ok", "warn", "bad", "none"];
 const MIB_PER_GIB = 1024;
 const MIB_PER_TIB = 1024 * 1024;
 
@@ -27,24 +30,36 @@ export function overviewCard(overview: WorkspaceOverviewRead | undefined, loaded
   return {
     checking: false,
     empty: false,
-    servers: serversLine(overview.servers),
-    instances: instanceLine(overview.instances as Partial<Record<InstanceState, number>>),
+    servers: serverCounts(overview.servers),
+    instances: instanceCounts(overview.instances as Partial<Record<InstanceState, number>>),
     gpus: gpuLine(overview.gpus),
     models: modelsLabel(overview.models),
   };
 }
 
-function serversLine(servers: WorkspaceOverviewRead["servers"]): CardLine {
-  const { total, up, not_tested, unreachable, trouble, docker_problem } = servers;
-  const attention = trouble + docker_problem;
-  if (attention > 0) {
-    const label = attention === unreachable ? `${unreachable} of ${total} unreachable` : `${attention} of ${total} need attention`;
-    return { tone: trouble > 0 ? "bad" : "warn", label };
-  }
-  if (up === total) return { tone: "ok", label: total === 1 ? "1 server up" : `${total} servers up` };
-  if (up > 0) return { tone: "ok", label: `${up} of ${total} servers up` };
-  // Never-tested servers aren't watched, so "checking…" would never end for them.
-  return not_tested === total ? { tone: "none", label: "not tested yet" } : { tone: "none", label: "checking…" };
+function serverCounts(servers: WorkspaceOverviewRead["servers"]): StatusCount[] {
+  const { total, up, trouble, docker_problem } = servers;
+  return [
+    { tone: "ok", count: up, words: "up" },
+    { tone: "warn", count: docker_problem, words: "Docker unusable" },
+    { tone: "bad", count: trouble, words: "can't connect" },
+    // The rest: never tested, or still being checked.
+    { tone: "none", count: total - up - docker_problem - trouble, words: "not tested or checking" },
+  ];
+}
+
+// Stopped ones aren't counted: they need nothing.
+const COUNTED_STATES = (Object.keys(INSTANCE_TONE) as InstanceState[]).filter((state) => state !== "stopped");
+
+function instanceCounts(counts: Partial<Record<InstanceState, number>>): StatusCount[] {
+  return TONES.map((tone) => {
+    const states = COUNTED_STATES.filter((state) => INSTANCE_TONE[state] === tone);
+    return {
+      tone,
+      count: states.reduce((sum, state) => sum + (counts[state] ?? 0), 0),
+      words: states.map((state) => INSTANCE_WORDS[state].toLowerCase()).join(" or "),
+    };
+  });
 }
 
 function gpuLine(gpus: WorkspaceOverviewRead["gpus"]): GpuLine | null {

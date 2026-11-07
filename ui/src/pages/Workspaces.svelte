@@ -4,7 +4,7 @@
   import { api, type WorkspaceOverviewRead } from "$lib/api/client";
   import NewWorkspaceDialog from "$lib/components/NewWorkspaceDialog.svelte";
   import WorkspaceIcon from "$lib/components/WorkspaceIcon.svelte";
-  import { overviewCard, type CardLine } from "$lib/overview";
+  import { overviewCard, type StatusCount } from "$lib/overview";
   import { ROLE_NAMES } from "$lib/permissions";
   import { every } from "$lib/poll";
   import { followLink } from "$lib/router.svelte";
@@ -33,11 +33,20 @@
   }
 </script>
 
-{#snippet line(value: CardLine)}
-  <p class="relative flex min-w-0 items-center gap-2">
-    <span class={`size-2 shrink-0 rounded-full ${TONE_DOT[value.tone]}`} aria-hidden="true"></span>
-    <span class="truncate">{value.label}</span>
-  </p>
+<!-- One row of the counts grid: its name, then a count and dot per status. Every row has the same columns, so they
+     line up. A zero stays in its column, faded. -->
+{#snippet counts(name: string, row: StatusCount[])}
+  <span class="pr-1 text-muted-foreground">{name}</span>
+  {#each row as each (each.tone)}
+    <span
+      class={["flex items-center justify-end gap-1.5 tabular-nums", each.count === 0 && "opacity-50"]}
+      title={`${each.count} ${each.words}`}
+    >
+      {each.count}
+      <span class={`size-2 shrink-0 rounded-full ${TONE_DOT[each.tone]}`} aria-hidden="true"></span>
+      <span class="sr-only">{each.words}</span>
+    </span>
+  {/each}
 {/snippet}
 
 <div class="flex-1 overflow-y-auto p-6">
@@ -80,8 +89,12 @@
             {:else if card.empty}
               <p class="relative text-muted-foreground">No servers yet</p>
             {:else}
-              {#if card.servers}{@render line(card.servers)}{/if}
-              {#if card.instances}{@render line(card.instances)}{/if}
+              {#if card.servers && card.instances}
+                <div class="relative grid w-fit grid-cols-[auto_repeat(4,auto)] items-center gap-x-4 gap-y-2">
+                  {@render counts("servers", card.servers)}
+                  {@render counts("instances", card.instances)}
+                </div>
+              {/if}
               {#if card.gpus}
                 <div class="relative space-y-1">
                   <p class="flex justify-between gap-2 text-xs text-muted-foreground">

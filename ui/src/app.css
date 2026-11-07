@@ -4,6 +4,7 @@
 /* Bundled with the app: vservx may run where there's no internet. */
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/geist-mono";
+@import "@fontsource-variable/roboto-mono";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -97,6 +98,8 @@
 @theme inline {
 	--font-sans: "Geist Variable", system-ui, sans-serif;
 	--font-mono: "Geist Mono Variable", ui-monospace, monospace;
+	/* The sign-in page's hop chain only: reads like a terminal. */
+	--font-code: "Roboto Mono Variable", ui-monospace, monospace;
 	/* Motion curves. ui/src/lib/motion.ts has the same numbers for Svelte transitions: change both together. */
 	--ease-out: cubic-bezier(0.23, 1, 0.32, 1);
 	--ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);

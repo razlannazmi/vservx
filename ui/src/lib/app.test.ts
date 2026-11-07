@@ -199,18 +199,14 @@ test("workspace card lines", () => {
   expect(overviewCard(undefined, false).checking).toBe(true);
   expect(overviewCard(undefined, true).empty).toBe(true); // created since the last poll
   expect(overviewCard(ov({}), true).empty).toBe(true);
-  const servers = (s: object) => overviewCard(ov(s), true).servers;
-  expect(servers({ total: 3, up: 3 })).toEqual({ tone: "ok", label: "3 servers up" });
-  expect(servers({ total: 1, up: 1 })?.label).toBe("1 server up");
-  expect(servers({ total: 4, up: 3, not_tested: 1 })).toEqual({ tone: "ok", label: "3 of 4 servers up" });
-  expect(servers({ total: 2, up: 1, unreachable: 1, trouble: 1 })).toEqual({ tone: "bad", label: "1 of 2 unreachable" });
-  expect(servers({ total: 3, up: 1, trouble: 1, docker_problem: 1 })).toEqual({ tone: "bad", label: "2 of 3 need attention" });
-  expect(servers({ total: 2, up: 1, docker_problem: 1 })).toEqual({ tone: "warn", label: "1 of 2 need attention" });
-  expect(servers({ total: 2, not_tested: 2 })).toEqual({ tone: "none", label: "not tested yet" });
-  expect(servers({ total: 2 })).toEqual({ tone: "none", label: "checking…" });
+  // Counts are ok, warn, bad, none: always all four, so the two rows' columns line up.
+  const counts = (row: { count: number }[] | null) => row?.map((each) => each.count);
+  const servers = (s: object) => counts(overviewCard(ov(s), true).servers);
+  expect(servers({ total: 3, up: 3 })).toEqual([3, 0, 0, 0]);
+  expect(servers({ total: 5, up: 1, docker_problem: 1, trouble: 2, unreachable: 1, not_tested: 1 })).toEqual([1, 1, 2, 1]);
 
   const full = overviewCard(
-    ov({ total: 1, up: 1 }, { ready: 5, crashed: 1, starting: 1 }, { count: 8, memory_used_mib: 217088, memory_total_mib: 393216 }, [
+    ov({ total: 1, up: 1 }, { ready: 5, crashed: 1, starting: 1, stopped: 2 }, { count: 8, memory_used_mib: 217088, memory_total_mib: 393216 }, [
       "meta-llama/Llama-3.1-70B",
       "Qwen/Qwen2.5-32B",
       "a/b",
@@ -218,7 +214,8 @@ test("workspace card lines", () => {
     ]),
     true,
   );
-  expect(full.instances).toEqual({ tone: "bad", label: "1 crashed · 7 instances · 1 starting" });
+  expect(counts(full.instances)).toEqual([5, 0, 1, 1]); // stopped ones aren't counted
+  expect(full.instances?.[3].words).toBe("starting or paused");
   expect(full.gpus?.label).toBe("8 GPUs");
   expect(full.gpus?.memory).toBe("212 / 384 GiB");
   expect(full.gpus?.percent).toBeCloseTo(55.2, 1);
@@ -226,6 +223,7 @@ test("workspace card lines", () => {
   expect(memoryLabel(1677722, 1992294)).toBe("1.6 / 1.9 TiB");
   const bare = overviewCard(ov({ total: 1, up: 1 }, {}, { count: 2, memory_used_mib: null, memory_total_mib: null }), true);
   expect(bare.gpus).toEqual({ label: "2 GPUs", memory: null, percent: null });
-  expect([bare.instances, bare.models]).toEqual([null, null]);
+  expect(counts(bare.instances)).toEqual([0, 0, 0, 0]);
+  expect(bare.models).toBeNull();
   expect(overviewCard(ov({ total: 1, up: 1 }), true).gpus).toBeNull();
 });
