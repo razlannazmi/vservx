@@ -23,9 +23,10 @@ export async function loadWorkspaces(): Promise<void> {
   }
 }
 
-/** Create a workspace (the caller owns it) and refresh the list. Throws with the API's words. */
-export async function createWorkspace(name: string): Promise<Workspace> {
-  const { data, error } = await api.POST("/api/workspaces", { body: { name } });
+/** Create a workspace (the caller owns it) and refresh the list. Throws with the API's words.
+ * A null icon is the default, so it follows the default if that ever changes. */
+export async function createWorkspace(name: string, icon: string | null = null): Promise<Workspace> {
+  const { data, error } = await api.POST("/api/workspaces", { body: { name, icon } });
   if (error || !data) throw new Error(errorMessage(error, "Couldn't create the workspace"));
   await loadWorkspaces();
   // Its address depends on the names already taken.

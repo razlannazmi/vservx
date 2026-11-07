@@ -4,6 +4,7 @@ from sqlalchemy import exists, select
 
 from api.auth import CurrentUserDep, revoke_tokens
 from api.auth.deps import clear_session_cookie, set_session_cookie
+from api.auth.limits import SignInLimitsDep, client_ip
 from api.auth.password import hash_password, verify_password
 from api.auth.tokens import create_access_token
 from api.config import get_settings
@@ -13,7 +14,7 @@ from api.models import User
 from api.schemas import LoginRequest, TokenResponse, UserRead
 from api.schemas.account import PasswordChange, ProfileUpdate, SignupRequest
 from api.service.database import DatabaseGateDep, DatabaseNotReady, require_current_database
-from api.service.users import authenticate, signup_open
+from api.service.users import AccountBlocked, authenticate, signup_open
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -32,16 +33,25 @@ def _sign_in(user: User, request: Request, response: Response) -> TokenResponse:
 
 @router.post("/login", response_model=TokenResponse)
 async def login(
-    data: LoginRequest, request: Request, response: Response, session: SessionDep, gate: DatabaseGateDep
+    data: LoginRequest, request: Request, response: Response, session: SessionDep, gate: DatabaseGateDep,
+    limits: SignInLimitsDep,
 ) -> TokenResponse:
+    ip = client_ip(request)
+    limits.attempt_sign_in(ip, data.email)
     password = data.password.get_secret_value()
-    user = await authenticate(session, data.email, password, detached=not gate.ready)
+    try:
+        user = await authenticate(session, data.email, password, detached=not gate.ready)
+    except AccountBlocked:
+        # The right password for a pending or disabled account: not a guess.
+        limits.sign_in_worked(ip, data.email)
+        raise
     if user is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    limits.sign_in_worked(ip, data.email)
     # While an upgrade waits, only admins (who can run it) get in; nobody else could do anything.
     if not gate.ready and user.role is not UserRole.ADMIN:
         assert gate.status is not None
@@ -55,11 +65,22 @@ async def logout(request: Request, response: Response) -> None:
     clear_session_cookie(response, request)
 
 
+@router.post("/logout-everywhere", status_code=status.HTTP_204_NO_CONTENT, dependencies=_current_database)
+async def logout_everywhere(user: CurrentUserDep, request: Request, response: Response, session: SessionDep) -> None:
+    """Sign out every browser and revoke every bearer token of this account, this one included.
+    For a token that may have been copied: logging out only forgets this browser's cookie."""
+    revoke_tokens(user)
+    await session.commit()
+    clear_session_cookie(response, request)
+
+
 @router.post("/signup", status_code=status.HTTP_202_ACCEPTED, dependencies=_current_database)
-async def sign_up(data: SignupRequest, session: SessionDep) -> dict[str, str]:
+async def sign_up(data: SignupRequest, request: Request, session: SessionDep, limits: SignInLimitsDep) -> dict[str, str]:
     """Ask for an account. It can't sign in until an app admin approves it."""
     if not await signup_open(session):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Sign-up is turned off")
+    # Before the email check too, so it can't be used to list registered emails quickly.
+    limits.attempt_sign_up(client_ip(request))
     # Saying so spares someone with a typo from waiting for an approval that never comes.
     if await session.scalar(select(exists().where(User.email == data.email))):
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="That email is already registered")

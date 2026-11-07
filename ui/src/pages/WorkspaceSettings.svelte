@@ -3,17 +3,21 @@
   import { toast } from "svelte-sonner";
   import { api, errorMessage, type MemberRead } from "$lib/api/client";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import IconPicker from "$lib/components/IconPicker.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import * as Select from "$lib/components/ui/select/index.js";
   import { isOwner } from "$lib/permissions";
   import { followLink, navigate } from "$lib/router.svelte";
+  import { DEFAULT_ICON, iconName } from "$lib/workspace-icons";
   import { leaveMissingWorkspace, loadWorkspaces, type Workspace } from "$lib/workspaces.svelte";
 
   let { workspace }: { workspace: Workspace } = $props();
 
   let name = $state("");
   let renaming = $state(false);
+  let icon = $state(DEFAULT_ICON);
+  let savingIcon = $state(false);
   let members = $state<MemberRead[]>([]);
   // The member chosen to become the owner, by user id.
   let heir = $state("");
@@ -26,8 +30,23 @@
 
   onMount(() => {
     name = workspace.name;
+    icon = iconName(workspace.icon);
     void loadMembers();
   });
+
+  async function saveIcon() {
+    savingIcon = true;
+    // The default is stored as null, so it follows the default if that ever changes.
+    const body = { icon: icon === DEFAULT_ICON ? null : icon };
+    const { error } = await api.PATCH("/api/workspaces/{workspace_id}", { params: { path }, body });
+    savingIcon = false;
+    if (error) {
+      toast.error(errorMessage(error, "Couldn't change the icon"));
+      return;
+    }
+    await loadWorkspaces();
+    toast.success("Workspace icon changed");
+  }
 
   async function loadMembers() {
     const { data, response } = await api.GET("/api/workspaces/{workspace_id}/members", { params: { path } });
@@ -80,6 +99,15 @@
         <Input aria-label="Workspace name" required maxlength={255} bind:value={name} />
         <Button type="submit" variant="outline" disabled={renaming || name.trim() === workspace.name}>Rename</Button>
       </form>
+    </section>
+
+    <section class="space-y-4 rounded-xl border bg-card p-5" aria-labelledby="settings-icon">
+      <div class="space-y-1.5">
+        <h2 id="settings-icon" class="font-medium">Icon</h2>
+        <p class="text-sm text-muted-foreground">Shown on the workspace's card and in the sidebar, for everyone in it.</p>
+      </div>
+      <IconPicker bind:value={icon} label="Workspace icon" />
+      <Button variant="outline" disabled={savingIcon || icon === iconName(workspace.icon)} onclick={saveIcon}>Save icon</Button>
     </section>
 
     <section class="space-y-4 rounded-xl border bg-card p-5" aria-labelledby="settings-hand-over">

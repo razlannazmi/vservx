@@ -83,11 +83,15 @@ export function cardStatus(server: ServerRead, summary: WatchSummaryRead | undef
   if (problem) return { tone: "warn", label: problem };
   // Connected, but the first look for instances hasn't finished.
   if (summary.docker === "unknown") return { tone: "none", label: "checking…" };
+  return instanceLine(summary.counts as Partial<Record<InstanceState, number>>) ?? { tone: "ok", label: "no instances" };
+}
 
-  const counts = summary.counts as Partial<Record<InstanceState, number>>;
+/** Instance counts as one line, problems first (the line truncates), for server and workspace cards.
+ * Null when there are none. */
+export function instanceLine(counts: Partial<Record<InstanceState, number>>): { tone: Tone; label: string } | null {
   const count = (state: InstanceState) => counts[state] ?? 0;
   const total = Object.values(counts).reduce<number>((sum, each) => sum + (each ?? 0), 0);
-  if (total === 0) return { tone: "ok", label: "no instances" };
+  if (total === 0) return null;
   const listed = (states: [InstanceState, string][]) =>
     states.filter(([state]) => count(state) > 0).map(([state, words]) => `${count(state)} ${words}`);
   const parts = [...listed(PROBLEMS), total === 1 ? "1 instance" : `${total} instances`, ...listed(OTHERS)];

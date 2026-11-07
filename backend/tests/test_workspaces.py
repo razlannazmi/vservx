@@ -20,11 +20,16 @@ async def _count_servers_and_keys(session: AsyncSession) -> tuple[int, int]:
 
 
 def test_workspace_list_shows_only_mine(
-    client: TestClient, api: TestClient, w: str, outsider_headers: dict[str, str]
+    client: TestClient, api: TestClient, workspace: int, w: str, outsider_headers: dict[str, str], closed_port: int
 ) -> None:
     assert client.get("/api/workspaces", headers=outsider_headers).json() == []
     [mine] = api.get("/api/workspaces").json()
     assert (mine["name"], mine["role"], mine["member_count"]) == ("Work", "owner", 1)
+    assert client.get("/api/workspaces/overview", headers=outsider_headers).json() == []
+    api.post(f"{w}/servers", json=_server(closed_port))
+    api.post(f"{w}/servers", json={**_server(closed_port, "jump"), "jump_only": True})
+    [overview] = api.get("/api/workspaces/overview").json()
+    assert (overview["workspace_id"], overview["servers"]["total"]) == (workspace, 1)  # jump host left out
 
 
 def test_workspace_names_are_unique(
@@ -36,6 +41,21 @@ def test_workspace_names_are_unique(
     assert api.patch(f"/api/workspaces/{home}", json={"name": "WORK"}).status_code == 409
     # Changing only the case of its own name is fine.
     assert api.patch(w, json={"name": "WORK"}).json()["name"] == "WORK"
+
+
+def test_owner_sets_the_icon(
+    client: TestClient, api: TestClient, w: str, member_headers: Callable[[WorkspaceRole], dict[str, str]]
+) -> None:
+    assert api.get(w).json()["icon"] is None
+    changed = api.patch(w, json={"icon": "rocket"}).json()
+    assert (changed["name"], changed["icon"]) == ("Work", "rocket")
+    assert api.patch(w, json={"name": "Works"}).json()["icon"] == "rocket"  # one field leaves the other alone
+    assert api.patch(w, json={"icon": None}).json()["icon"] is None
+    assert api.patch(w, json={"icon": "Not An Icon"}).status_code == 422
+    assert api.patch(w, json={"name": None}).status_code == 422
+    operator = member_headers(WorkspaceRole.OPERATOR)
+    assert client.patch(w, json={"icon": "rocket"}, headers=operator).status_code == 403
+    assert api.post("/api/workspaces", json={"name": "Lab", "icon": "flask-conical"}).json()["icon"] == "flask-conical"
 
 
 def test_non_members_get_404(

@@ -6,6 +6,7 @@ import jwt
 import pytest
 from fastapi.testclient import TestClient
 
+from api.auth.limits import SignInLimits
 from api.auth.tokens import create_access_token
 from api.config import get_settings
 from api.enums import UserRole
@@ -32,6 +33,19 @@ def test_login_failures_are_indistinguishable(client: TestClient) -> None:
     assert [r.status_code for r in responses] == [401, 401]
     # Same body every time, so a caller can't learn which emails have accounts.
     assert len({r.text for r in responses}) == 1
+
+
+def test_sign_in_and_sign_up_are_rate_limited(client: TestClient) -> None:
+    client.app.state.sign_in_limits = SignInLimits(failures_per_ip=3, sign_ups_per_ip=1)
+    # Sign-ins that work don't count.
+    assert {_login(client, ADMIN["email"], ADMIN["password"]).status_code for _ in range(4)} == {200}
+    assert [_login(client, "nobody@example.com", "wrong-password").status_code for _ in range(3)] == [401] * 3
+    # Refused before the password is checked, so even the right one waits.
+    refused = _login(client, ADMIN["email"], ADMIN["password"])
+    assert refused.status_code == 429 and int(refused.headers["retry-after"]) > 0
+    assert "Try again in 15 minutes" in refused.json()["detail"]
+    assert client.post("/api/auth/signup", json=NEW).status_code == 202
+    assert client.post("/api/auth/signup", json=NEW | {"email": "bea@example.com"}).status_code == 429
 
 
 def test_browser_session_cookie(client: TestClient) -> None:
@@ -79,12 +93,18 @@ def test_app_files_served(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     monkeypatch.setenv("VSERVX_UI_DIR", str(ui))
     get_settings.cache_clear()
     with TestClient(create_app()) as client:
-        assert "<title>vservx</title>" in client.get("/").text
+        page = client.get("/")
+        assert "<title>vservx</title>" in page.text
+        assert "frame-ancestors 'none'" in page.headers["content-security-policy"]
+        assert page.headers["x-frame-options"] == "DENY"
         # A link into the app works on refresh.
         assert "<title>vservx</title>" in client.get("/workspaces/homelab/servers/2").text
         assert client.get("/assets/app.js").text == "console.log(1)"
         missing = client.get("/api/nope")
         assert missing.status_code == 404 and missing.headers["content-type"].startswith("application/json")
+        assert missing.headers["x-content-type-options"] == "nosniff"
+        # /docs loads Swagger UI from a CDN, so the app's policy stays off it.
+        assert "content-security-policy" not in client.get("/docs").headers
 
 
 # --- Sign-up and accounts
@@ -150,3 +170,12 @@ def test_change_own_name_and_password(client: TestClient, add_user: Callable[...
     new_token = client.post(f"{ME}/password", json=body, headers=old).json()["access_token"]
     assert client.get(ME, headers=old).status_code == 401
     assert client.get(ME, headers={"Authorization": f"Bearer {new_token}"}).status_code == 200
+
+
+def test_logout_everywhere_revokes_every_token(client: TestClient, add_user: Callable[..., None]) -> None:
+    add_user("ada@example.com")
+    copied = login_headers(client, "ada@example.com", USER_PASSWORD)
+    assert client.get(ME).status_code == 200  # this browser's cookie
+    assert client.post("/api/auth/logout-everywhere", headers={"X-Vservx": "1"}).status_code == 204
+    assert client.get(ME).status_code == 401
+    assert client.get(ME, headers=copied).status_code == 401

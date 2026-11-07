@@ -14,12 +14,26 @@ import asyncssh
 from api.config import Settings
 from api.db.base import utcnow
 from api.enums import ConnectionFailure, DockerStatus, InstanceState, WatchState
-from api.schemas.watch import GpuRead, ServerWatchRead, UsagePointRead, WatchedInstanceRead, WatchSummaryRead
+from api.schemas.watch import (
+    GpuRead,
+    RemovedInstanceRead,
+    ServerWatchRead,
+    UsagePointRead,
+    WatchedInstanceRead,
+    WatchSummaryRead,
+)
+from api.snapshots.config import LaunchConfig, launch_config
+from api.snapshots.fingerprint import fingerprint
+from api.snapshots.recorder import REMOVED_ROW_DAYS, Seen, SnapshotRecorder
 from api.ssh.connect import Hop, connect_chain
 from api.watch.docker import (
     PS_ARGS,
     DockerAccess,
+    ImageDefaults,
+    image_inspect_args,
     inspect_args,
+    is_template_error,
+    parse_image_inspect,
     parse_inspect,
     parse_ps,
     probe_docker,
@@ -28,7 +42,7 @@ from api.watch.docker import (
 )
 from api.watch.frameworks import Container, Framework, HttpResponse, InstanceInfo, InstanceSpec, framework_for
 from api.watch.gpus import GPU_COMMAND, Gpu, gpu_users, parse_gpus
-from api.watch.shell import CantReachPort, PortClosed, Shell
+from api.watch.shell import CantReachPort, CommandResult, PortClosed, Shell
 from api.watch.states import Probe, instance_state
 from api.watch.usage import UsageHistory, UsagePoint
 
@@ -39,7 +53,12 @@ RECONNECT_FIRST = 10.0
 RECONNECT_MAX = 300.0
 # Refresh looks for instances at most this often.
 REFRESH_GAP = timedelta(seconds=5)
+# Instances read at the same moment on one server. Read through curl, each is an SSH session,
+# and sshd allows 10 per connection by default (MaxSessions).
+PROBES_AT_ONCE = 4
 NO_GPUS = "nvidia-smi isn't available on this server."
+# Discoveries an image's own settings are asked for before snapshots go ahead without them.
+IMAGE_TRIES = 3
 
 # Docker answers that only a change to the server's settings can fix (which starts a new
 # ServerWatch), so they're not asked again. A rejected sudo password, tried again, can lock the account.
@@ -80,10 +99,22 @@ def usage_read(point: UsagePoint) -> UsagePointRead:
 
 class ServerWatch:
     def __init__(self, config: WatchConfig, settings: Settings, limiter: asyncio.Semaphore,
-                 histories: dict[str, UsageHistory]) -> None:
+                 histories: dict[str, UsageHistory], recorder: SnapshotRecorder | None = None) -> None:
         """`histories` (container name -> history) belongs to the caller, so it outlives this
-        watch when the server's settings change and a new one takes over."""
+        watch when the server's settings change and a new one takes over. `recorder` writes launch
+        snapshots; without one, none are taken."""
         self.config = config
+        self._recorder = recorder
+        # Image ID -> its own settings; None once they couldn't be read IMAGE_TRIES times, so they aren't asked again.
+        self._image_defaults: dict[str, ImageDefaults | None] = {}
+        self._image_failures: dict[str, int] = {}
+        # Set once this server's Docker can't run the env filter: env names only from then on.
+        self._env_names_only = False
+        # What was last written: name -> (container ID, config, fingerprint). None until a write succeeds.
+        self._recorded: dict[str, tuple[str, LaunchConfig, str | None]] | None = None
+        self._record_failing = False
+        self._changed_at: dict[str, datetime] = {}
+        self._removed: list[RemovedInstanceRead] = []
         self._settings = settings
         self._limiter = limiter
         self._histories = histories
@@ -187,9 +218,8 @@ class ServerWatch:
                    >= timedelta(seconds=self._settings.discovery_interval_seconds))
         if self._discovery_due or overdue:
             await self._discover(shell)
-        for instance in self._instances.values():
-            if instance.container.status == "running":
-                await self._probe(shell, instance)
+        await self._probe_all(shell, [instance for instance in self._instances.values()
+                                      if instance.container.status == "running"])
         await self._read_gpus(shell, retry=overdue)
         self._read_at = utcnow()
 
@@ -213,10 +243,10 @@ class ServerWatch:
                       if (framework := framework_for(entry.image, entry.command))}
         containers: list[Container] = []
         if frameworks:
-            inspected = await run_docker(shell, self._docker, inspect_args(list(frameworks)), sudo_password)
+            inspected = await self._inspect(shell, list(frameworks))
             if inspected.exit_status != 0 and not inspected.stdout.strip():
                 return  # keep what's known rather than lose every instance's history to one bad answer
-            containers = parse_inspect(inspected.stdout)
+            containers = parse_inspect(inspected.stdout, env_values_hidden=self._env_names_only)
         found = set()
         for container in containers:
             framework = frameworks.get(container.name)
@@ -237,8 +267,109 @@ class ServerWatch:
                 del self._instances[name]
                 self._histories.pop(name, None)
         self._found_at = utcnow()
+        await self._record(shell, [container for container in containers if container.name in found])
+
+    async def _inspect(self, shell: Shell, names: list[str]) -> CommandResult:
+        """docker inspect, falling back for good to env names only when Docker can't run the filter."""
+        sudo_password = self.config.sudo_password
+        result = await run_docker(shell, self._docker, inspect_args(names, not self._env_names_only), sudo_password)
+        if not self._env_names_only and is_template_error(result):
+            logger.warning("Server %s: Docker can't run the env filter, so env values won't be shown",
+                           self.config.server_id)
+            self._env_names_only = True
+            result = await run_docker(shell, self._docker, inspect_args(names, False), sudo_password)
+        return result
+
+    # Recording snapshots
+
+    async def _image_settings(self, shell: Shell, containers: list[Container]) -> bool:
+        """Read the images' own settings once each. False while one couldn't be read yet: a config
+        built without them would hold the image's inherited env and entrypoint, then change once
+        they read fine. An image still unreadable after IMAGE_TRIES discoveries is given up on."""
+        missing = sorted({c.image_id for c in containers if c.image_id and c.image_id not in self._image_defaults})
+        if not missing:
+            return True
+        result = await run_docker(shell, self._docker, image_inspect_args(missing, not self._env_names_only),
+                                  self.config.sudo_password)
+        try:
+            found = parse_image_inspect(result.stdout)
+        except (ValueError, KeyError):
+            found = {}
+        known = True
+        for image_id in missing:
+            if image_id in found:
+                self._image_defaults[image_id] = found[image_id]
+                self._image_failures.pop(image_id, None)
+                continue
+            failures = self._image_failures.get(image_id, 0) + 1
+            if failures >= IMAGE_TRIES:
+                self._image_defaults[image_id] = None
+                self._image_failures.pop(image_id, None)
+            else:
+                self._image_failures[image_id] = failures
+                known = False
+        return known
+
+    async def _record(self, shell: Shell, containers: list[Container]) -> None:
+        """Hand what was found to the recorder, unless nothing changed since the last write. A
+        failed write is tried again at the next discovery; watching carries on regardless."""
+        if self._recorder is None:
+            return
+        if not await self._image_settings(shell, containers):
+            return  # tried again at the next discovery
+        seen = []
+        for container in containers:
+            spec = self._instances[container.name].spec
+            key_fingerprint, key_id = fingerprint(spec.api_key) if spec.api_key else (None, None)
+            seen.append(Seen(
+                name=container.name, container_id=container.id, created_at=container.created_at,
+                started_at=container.started_at, restart_count=container.restart_count, image_id=container.image_id,
+                model=spec.model, config=launch_config(container, self._image_defaults.get(container.image_id)),
+                key_fingerprint=key_fingerprint, key_id=key_id,
+            ))
+        signature = {s.name: (s.container_id, s.config, s.key_fingerprint) for s in seen}
+        if signature == self._recorded:
+            return
+        try:
+            recorded = await self._recorder.record(self.config.server_id, seen, utcnow())
+        except Exception:
+            if not self._record_failing:
+                logger.exception("Server %s: couldn't save launch snapshots; trying again at the next discovery",
+                                 self.config.server_id)
+            self._record_failing = True
+            return
+        self._record_failing = False
+        self._recorded, self._changed_at, self._removed = signature, recorded.changed_at, recorded.removed
+
+    async def _fill_version(self, instance: _Instance) -> None:
+        if self._recorder is None or instance.info is None or not instance.info.version:
+            return
+        try:
+            await self._recorder.fill_version(self.config.server_id, instance.container.name, instance.container.id,
+                                              instance.info.version)
+        except Exception:
+            logger.exception("Server %s: couldn't save instance %s's vLLM version", self.config.server_id,
+                             instance.container.name)
 
     # Reading usage
+
+    async def _probe_all(self, shell: Shell, instances: list[_Instance]) -> None:
+        """Read the instances side by side, so a few slow ones can't push the round past its time
+        limit and get the whole server called unreachable."""
+        at_once = asyncio.Semaphore(PROBES_AT_ONCE)
+
+        async def probe(instance: _Instance) -> None:
+            async with at_once:
+                await self._probe(shell, instance)
+
+        try:
+            async with asyncio.TaskGroup() as group:
+                for instance in instances:
+                    group.create_task(probe(instance))
+        except ExceptionGroup as failed:
+            # The connection broke under one of them, and the rest were cancelled: the round fails
+            # on that error, as it did when they were read one at a time.
+            raise failed.exceptions[0] from None
 
     async def _probe(self, shell: Shell, instance: _Instance) -> None:
         host, port = target(instance.container, instance.spec.port)
@@ -266,6 +397,7 @@ class ServerWatch:
             try:
                 if instance.info is None:
                     instance.info = await instance.framework.read_info(get, instance.spec)
+                    await self._fill_version(instance)
                 metrics = await get(instance.framework.metrics_path, {})
                 if metrics.status == 200:
                     history = self._histories.setdefault(instance.container.name, UsageHistory(self._history_length))
@@ -333,6 +465,7 @@ class ServerWatch:
             restart_count=container.restart_count,
             usage=usage_read(latest) if latest and instance.state is InstanceState.READY else None,
             running_trend=[point.running for point in history.points] if history else [],
+            changed_at=self._changed_at.get(container.name),
         )
 
     def view(self) -> ServerWatchRead:
@@ -344,11 +477,14 @@ class ServerWatch:
                             memory_used_mib=gpu.memory_used, memory_total_mib=gpu.memory_total,
                             temperature_c=gpu.temperature, instances=users.get(gpu.index, []))
                     for gpu in self._gpus]
+        since = utcnow() - timedelta(days=REMOVED_ROW_DAYS)
+        removed = [row for row in self._removed if row.removed_at >= since and row.name not in self._instances]
         return ServerWatchRead(
             server_id=self.config.server_id, state=self._state, since=self._since, message=self._message,
             docker=self._docker.status, docker_message=self._docker.message,
             found_at=self._found_at, read_at=self._read_at,
             instances=[self._instance_read(instance) for instance in instances],
+            removed=removed,
             gpus=gpus, gpu_message=self._gpu_message,
             usage_interval_seconds=self._settings.usage_interval_seconds,
         )

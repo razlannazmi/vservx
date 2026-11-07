@@ -32,7 +32,9 @@ vservx watches every saved server that has passed a connection test, all the tim
 <user> ALL=(root) NOPASSWD: /usr/bin/docker
 ```
 
-**Which servers are watched.** Servers marked "jump host only" aren't searched. A server is watched only once a connection test has recorded its host key (and its jump hosts'), so vservx never starts trusting a key in the background. A rejected sign-in stops the watching until the server's settings change or a connection test passes, instead of retrying a wrong password. Of a container's environment, vservx keeps only `VLLM_API_KEY` (in memory, to ask `/v1/models` for the context length) and `NVIDIA_VISIBLE_DEVICES`.
+**Which servers are watched.** Servers marked "jump host only" aren't searched. A server is watched only once a connection test has recorded its host key (and its jump hosts'), so vservx never starts trusting a key in the background. A rejected sign-in stops the watching until the server's settings change or a connection test passes, instead of retrying a wrong password.
+
+**A container's environment.** Non-secret env vars come back in full, for snapshots. Secret-looking ones are filtered on the server, inside the `docker inspect` template, so only their names cross SSH. A name counts as secret when, upper-cased, it contains `TOKEN`, `SECRET`, `PASSWORD`, `PASSWD`, `API_KEY`, `ACCESS_KEY`, `PRIVATE_KEY` or `CREDENTIAL`, or ends in `_KEY` (so `HF_TOKEN`, `OPENAI_API_KEY` and `AWS_SECRET_ACCESS_KEY` are caught). The one exception is `VLLM_API_KEY`: its value is held in memory only, to ask `/v1/models` for the context length and to fingerprint it. If a server's Docker is too old to run the filter, every env var comes back as a name only.
 
 Each instance shows its state (Ready, Starting, Not responding, Restarting, Crashed, Stopped, Paused), model, port, context length, GPUs, image and vLLM version. A crashed container shows its exit code, whether it ran out of memory, and how often Docker restarted it.
 
@@ -47,11 +49,20 @@ Every 5 seconds vservx reads each ready instance's `/health` and Prometheus `/me
 
 30 minutes of history is kept in memory for the charts; it starts again empty when vservx restarts. Longer history is Prometheus's job (see Integrations).
 
+### Snapshots
+vservx remembers how each vLLM container was launched, so a container that's gone can be started again and a redeploy can be traced. Open them with **Snapshots** in the server's header, or the history icon on an Instances row.
+
+- **Automatic capture.** A snapshot is taken the first time vservx sees a container, and again whenever it's recreated or its launch config changes. Restarts, reordered env vars and vservx restarting don't count as changes.
+- **A command to bring it back.** Each snapshot shows a rebuilt `docker run` with Copy. Secrets appear as placeholders such as `-e HF_TOKEN=<HF_TOKEN>` and `--api-key <VLLM_API_KEY>`, left unquoted so pasting one unfilled fails in the shell. A line under it lists what the rebuild covers, and containers started by docker compose say so.
+- **Change list and compare.** Per container and for the whole server, newest first: when it happened, the kind (first seen, recreated, recreated with the same config, changed, removed), what differs from the snapshot before, and the container IDs. Any two snapshots on a server can be compared, with their commands as a line diff. A container recreated in the last 24 hours gets a "changed" tag in the table.
+- **Removed containers.** A container that's `docker rm`'d keeps its snapshots. It stays greyed in the Instances table for 7 days and in the server's change list for good. Nothing is marked removed when the server can't be reached or `docker ps` fails.
+- **API key fingerprint.** The vLLM API key is kept only as an 8-character keyed fingerprint (HMAC, keyed from vservx's key file). **Check a key** tells anyone whether a key they found matches, at most 10 times a minute per person. No secret value is ever stored.
+
 ### Management
 - **Stop / Force kill / Restart:** uses the right mechanism for each launch type (Docker, systemd, or process signals)
 - **Start:** launch a new instance from a form or a raw command, run as a managed Docker container or `systemd-run` unit
 - **Preflight checks:** before starting, checks that the port is free, there is enough GPU memory, and the model is cached
-- **Snapshots:** saves an instance's launch config automatically on discovery and before every stop, or on demand
+- **Pre-stop snapshots:** take a snapshot before every stop, once stopping from vservx exists
 - **Logs:** view and tail instance logs
 - **Test:** send a small completion request and see the response and latency
 - **Confirmations:** destructive actions show in-flight requests and ask before running
@@ -69,7 +80,8 @@ Every 5 seconds vservx reads each ready instance's `/health` and Prometheus `/me
 - **Signing up:** anyone can ask for an account from the sign-in page. The account waits until an app admin approves it; signing in before then says "Your account is waiting for approval". Rejecting a sign-up deletes it.
 - **The sign-up switch:** an admin can close sign-up under Admin → Accounts. The sign-in page then has no "Create an account" link.
 - **Admin or member:** admins approve sign-ups, make or remove admins, disable accounts and set new passwords, see every workspace and change its owner, and run database upgrades. Everyone else is a member. vservx always keeps at least one active admin.
-- **Sessions:** signing in to the web app sets an HttpOnly session cookie that lasts 7 days (`VSERVX_ACCESS_TOKEN_MINUTES`). Changing your password signs out your other sessions. API clients can use the bearer token from `POST /api/auth/login` instead.
+- **Sessions:** signing in to the web app sets an HttpOnly session cookie that lasts 7 days (`VSERVX_ACCESS_TOKEN_MINUTES`). Changing your password signs out your other sessions, and Account → Sign out everywhere signs out all of them, this one included. API clients can use the bearer token from `POST /api/auth/login` instead.
+- **Password guessing:** after 20 failed sign-ins from one address within 15 minutes, or 100 for one email from any number of addresses, sign-in answers 429 until the oldest of them is 15 minutes old, without checking the password. Sign-up allows 5 requests per address per hour. The counts are kept in memory, so a restart clears them. Behind a reverse proxy, set `FORWARDED_ALLOW_IPS` to the proxy's address so uvicorn reads each client's address from `X-Forwarded-For`; otherwise every client counts as the proxy.
 
 ### Workspaces
 

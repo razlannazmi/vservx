@@ -30,6 +30,15 @@ export type InstanceHistoryRead = Schemas["InstanceHistoryRead"];
 export type InstanceState = Schemas["InstanceState"];
 export type WatchState = Schemas["WatchState"];
 export type DockerStatus = Schemas["DockerStatus"];
+export type WorkspaceOverviewRead = Schemas["WorkspaceOverviewRead"];
+export type RemovedInstanceRead = Schemas["RemovedInstanceRead"];
+export type SnapshotKind = Schemas["SnapshotKind"];
+export type DifferenceRead = Schemas["DifferenceRead"];
+export type SnapshotEntryRead = Schemas["SnapshotEntryRead"];
+export type SnapshotPageRead = Schemas["SnapshotPageRead"];
+export type SnapshotDetailRead = Schemas["SnapshotDetailRead"];
+export type SnapshotCompareRead = Schemas["SnapshotCompareRead"];
+export type CheckKeyRead = Schemas["CheckKeyRead"];
 
 const listeners = new Set<(signal: ApiSignal) => void>();
 

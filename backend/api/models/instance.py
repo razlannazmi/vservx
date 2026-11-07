@@ -4,8 +4,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from api.db.base import Base, str_enum, utcnow
-from api.enums import LaunchType
+from api.db.base import Base
 
 if TYPE_CHECKING:
     from api.models.server import Server
@@ -13,21 +12,24 @@ if TYPE_CHECKING:
 
 
 class Instance(Base):
-    """A vLLM instance found by discovery; rows are refreshed on each scan."""
+    """A container name vservx has seen on a server: the identity snapshots belong to. Kept after
+    the container is removed, so its snapshots stay."""
 
     __tablename__ = "instances"
-    __table_args__ = (UniqueConstraint("server_id", "launch_type", "ref"),)
+    __table_args__ = (UniqueConstraint("server_id", "name"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     server_id: Mapped[int] = mapped_column(ForeignKey("servers.id", ondelete="CASCADE"), index=True)
-    launch_type: Mapped[LaunchType] = mapped_column(str_enum(LaunchType))
-    # Container ID, unit name, or PID.
-    ref: Mapped[str] = mapped_column(String(255))
+    name: Mapped[str] = mapped_column(String(255))
+    # The current, or last seen, container's full ID.
+    container_id: Mapped[str] = mapped_column(String(64))
     model: Mapped[str | None] = mapped_column(String(512))
-    port: Mapped[int | None]
-    managed: Mapped[bool] = mapped_column(default=False)
-    status: Mapped[str] = mapped_column(String(32), default="unknown")
-    last_seen: Mapped[datetime] = mapped_column(default=utcnow)
+    first_seen: Mapped[datetime]
+    last_seen: Mapped[datetime]
+    # When vservx noticed the container gone; None while it exists.
+    removed_at: Mapped[datetime | None]
 
     server: Mapped["Server"] = relationship(back_populates="instances")
-    snapshots: Mapped[list["Snapshot"]] = relationship(back_populates="instance")
+    snapshots: Mapped[list["Snapshot"]] = relationship(
+        back_populates="instance", cascade="all, delete-orphan", passive_deletes=True
+    )

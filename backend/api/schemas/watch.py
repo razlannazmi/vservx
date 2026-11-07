@@ -46,6 +46,20 @@ class WatchedInstanceRead(BaseModel):
     usage: UsagePointRead | None
     # Running requests over the kept history, oldest first.
     running_trend: list[float | None]
+    # When its latest snapshot was a recreation or change; None when it's first seen (or unknown).
+    changed_at: datetime | None = None
+
+
+class RemovedInstanceRead(BaseModel):
+    """A container noticed removed in the last 7 days. Its snapshots are kept."""
+
+    model_config = _READ
+
+    name: str
+    image: str | None
+    model: str | None
+    last_seen: datetime
+    removed_at: datetime
 
 
 class GpuRead(BaseModel):
@@ -75,6 +89,8 @@ class ServerWatchRead(BaseModel):
     read_at: datetime | None
     # Sorted by name.
     instances: list[WatchedInstanceRead]
+    # Removed in the last 7 days and not back since, newest first.
+    removed: list[RemovedInstanceRead] = []
     # None when nvidia-smi isn't available (gpu_message says why) or hasn't run yet.
     gpus: list[GpuRead] | None
     gpu_message: str | None
@@ -92,6 +108,45 @@ class WatchSummaryRead(BaseModel):
     docker: DockerStatus
     # Only states with at least one instance.
     counts: dict[InstanceState, int]
+
+
+class ServerCountsRead(BaseModel):
+    """A workspace's watched servers (jump hosts aren't watched), by how they're doing."""
+
+    model_config = _READ
+
+    total: int
+    up: int
+    not_tested: int
+    unreachable: int
+    # Unreachable, sign-in failed, or host key changed.
+    trouble: int
+    # Connected, but Docker can't be used, so its instances can't be seen.
+    docker_problem: int
+
+
+class GpuTotalsRead(BaseModel):
+    model_config = _READ
+
+    count: int
+    # Over the GPUs that report both; None when none do.
+    memory_used_mib: float | None
+    memory_total_mib: float | None
+
+
+class WorkspaceOverviewRead(BaseModel):
+    """What a workspace's card on the landing page needs."""
+
+    model_config = _READ
+
+    workspace_id: int
+    servers: ServerCountsRead
+    # Only states with at least one instance.
+    instances: dict[InstanceState, int]
+    # None when no server has GPU readings.
+    gpus: GpuTotalsRead | None
+    # Models of ready instances, once each, sorted.
+    models: list[str]
 
 
 class InstanceHistoryRead(BaseModel):

@@ -1,11 +1,14 @@
 <script lang="ts">
+  import IconPicker from "$lib/components/IconPicker.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import { Label } from "$lib/components/ui/label/index.js";
   import { navigate } from "$lib/router.svelte";
+  import { DEFAULT_ICON } from "$lib/workspace-icons";
   import { createWorkspace } from "$lib/workspaces.svelte";
 
   let name = $state("");
+  let icon = $state(DEFAULT_ICON);
   let busy = $state(false);
   let message = $state<string | null>(null);
 
@@ -14,7 +17,7 @@
     busy = true;
     message = null;
     try {
-      const workspace = await createWorkspace(name.trim());
+      const workspace = await createWorkspace(name.trim(), icon === DEFAULT_ICON ? null : icon);
       navigate(`/workspaces/${workspace.slug}`, { replace: true });
     } catch (error) {
       message = (error as Error).message;
@@ -35,6 +38,10 @@
     <div class="space-y-2">
       <Label for="welcome-workspace-name">Workspace name</Label>
       <Input id="welcome-workspace-name" required maxlength={255} placeholder="l40s-node, lab, compute-farm" bind:value={name} />
+    </div>
+    <div class="space-y-2">
+      <p class="text-sm leading-none font-medium">Icon</p>
+      <IconPicker bind:value={icon} label="Workspace icon" />
     </div>
     {#if message}
       <p role="alert" class="rounded-lg border px-3 py-2 text-sm">{message}</p>

@@ -70,18 +70,51 @@ def _dechunk(body: bytes) -> bytes | None:
     return None
 
 
-def _complete(raw: bytes | bytearray) -> bool:
-    """Whether the whole answer is in: the headers, then all of a Content-Length body or every
-    chunk. Without either, the answer ends only when the connection closes."""
-    head_end = raw.find(b"\r\n\r\n")
-    if head_end == -1:
+class _AnswerProgress:
+    """Whether the whole answer is in yet, asked again after every read: the headers, then all of a
+    Content-Length body or every chunk. Without either, the answer ends only when the connection
+    closes. Each call looks only at what's new since the last, so an answer that arrives in many
+    reads costs about as much as one that arrives in a single read."""
+
+    def __init__(self) -> None:
+        # How far the end of the headers has been looked for.
+        self._searched = 0
+        self._body_start: int | None = None
+        self._chunked = False
+        self._length: int | None = None
+        # Where the next chunk's size line starts.
+        self._next_chunk = 0
+
+    def complete(self, raw: bytearray) -> bool:
+        if self._body_start is None:
+            # The blank line can straddle two reads, so look again from just before the last search ended.
+            head_end = raw.find(b"\r\n\r\n", max(0, self._searched - 3))
+            self._searched = len(raw)
+            if head_end == -1:
+                return False
+            fields = _fields(bytes(raw[:head_end]))
+            self._body_start = self._next_chunk = head_end + 4
+            self._chunked = _chunked(fields)
+            length = fields.get(b"content-length", b"")
+            self._length = int(length) if length.isdigit() else None
+        if self._chunked:
+            return self._last_chunk_in(raw)
+        return self._length is not None and len(raw) - self._body_start >= self._length
+
+    def _last_chunk_in(self, raw: bytearray) -> bool:
+        """Step over every chunk that's wholly in; True once the last (zero-size) one is reached."""
+        while (line_end := raw.find(b"\r\n", self._next_chunk)) != -1:
+            try:
+                size = int(raw[self._next_chunk:line_end].split(b";", 1)[0].strip(), 16)
+            except ValueError:
+                return False
+            if size == 0:
+                return True
+            chunk_end = line_end + 2 + size + 2
+            if len(raw) < chunk_end:
+                return False
+            self._next_chunk = chunk_end
         return False
-    fields = _fields(bytes(raw[:head_end]))
-    body = bytes(raw[head_end + 4:])
-    if _chunked(fields):
-        return _dechunk(body) is not None
-    length = fields.get(b"content-length", b"")
-    return length.isdigit() and len(body) >= int(length)
 
 
 def _response(raw: bytes) -> HttpResponse:
@@ -136,12 +169,13 @@ class Shell:
             # answer, so don't wait for the close once the answer says it's all in.
             lines = [f"GET {path} HTTP/1.0", f"Host: {host}:{port}", *(f"{k}: {v}" for k, v in headers.items()), "", ""]
             writer.write("\r\n".join(lines).encode())
+            progress = _AnswerProgress()
             while len(received) < MAX_BODY:
                 chunk = await reader.read(65536)
                 if not chunk:
                     break
                 received += chunk
-                if _complete(received):
+                if progress.complete(received):
                     break
         finally:
             writer.close()

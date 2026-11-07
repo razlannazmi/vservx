@@ -55,6 +55,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/auth/logout-everywhere": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Logout Everywhere
+         * @description Sign out every browser and revoke every bearer token of this account, this one included.
+         *     For a token that may have been copied: logging out only forgets this browser's cookie.
+         */
+        post: operations["logout_everywhere_api_auth_logout_everywhere_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/signup": {
         parameters: {
             query?: never;
@@ -301,6 +322,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/overview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Overviews
+         * @description Each of the caller's workspaces at a glance, from what the watcher has seen.
+         */
+        get: operations["list_overviews_api_workspaces_overview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}": {
         parameters: {
             query?: never;
@@ -319,8 +360,11 @@ export interface paths {
         delete: operations["delete_my_workspace_api_workspaces__workspace_id__delete"];
         options?: never;
         head?: never;
-        /** Rename Workspace */
-        patch: operations["rename_workspace_api_workspaces__workspace_id__patch"];
+        /**
+         * Update Workspace
+         * @description Rename the workspace, change its icon, or both.
+         */
+        patch: operations["update_workspace_api_workspaces__workspace_id__patch"];
         trace?: never;
     };
     "/api/workspaces/{workspace_id}/owner": {
@@ -605,6 +649,100 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/servers/{server_id}/snapshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Server Snapshots
+         * @description Every instance's changes and removals on the server, newest first.
+         */
+        get: operations["list_server_snapshots_api_workspaces__workspace_id__servers__server_id__snapshots_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/servers/{server_id}/instances/{name}/snapshots": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Instance Snapshots */
+        get: operations["list_instance_snapshots_api_workspaces__workspace_id__servers__server_id__instances__name__snapshots_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/servers/{server_id}/snapshots/compare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Compare Snapshots
+         * @description Any two snapshots of this server; the older is always "from".
+         */
+        get: operations["compare_snapshots_api_workspaces__workspace_id__servers__server_id__snapshots_compare_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/servers/{server_id}/snapshots/{snapshot_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Snapshot */
+        get: operations["get_snapshot_api_workspaces__workspace_id__servers__server_id__snapshots__snapshot_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/servers/{server_id}/snapshots/{snapshot_id}/check-key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Check Key
+         * @description Whether a key matches the snapshot's API key fingerprint. The key is never stored or logged.
+         */
+        post: operations["check_key_api_workspaces__workspace_id__servers__server_id__snapshots__snapshot_id__check_key_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -692,6 +830,18 @@ export interface components {
              */
             created_at: string;
         };
+        /** CheckKeyRead */
+        CheckKeyRead: {
+            /** Matches */
+            matches: boolean | null;
+            /** Reason */
+            reason: string | null;
+        };
+        /** CheckKeyRequest */
+        CheckKeyRequest: {
+            /** Key */
+            key: string;
+        };
         /**
          * ConnectionFailure
          * @description Why an SSH hop failed.
@@ -730,6 +880,17 @@ export interface components {
          * @enum {string}
          */
         DatabaseState: "new" | "current" | "upgrade_required" | "newer_than_app";
+        /** DifferenceRead */
+        DifferenceRead: {
+            /** Label */
+            label: string;
+            /** Before */
+            before: string | null;
+            /** After */
+            after: string | null;
+            /** Note */
+            note: string | null;
+        };
         /**
          * DockerStatus
          * @description Whether vservx can run docker on a server, and how.
@@ -752,6 +913,15 @@ export interface components {
             temperature_c: number | null;
             /** Instances */
             instances: string[];
+        };
+        /** GpuTotalsRead */
+        GpuTotalsRead: {
+            /** Count */
+            count: number;
+            /** Memory Used Mib */
+            memory_used_mib: number | null;
+            /** Memory Total Mib */
+            memory_total_mib: number | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -916,6 +1086,28 @@ export interface components {
             /** Name */
             name: string;
         };
+        /**
+         * RemovedInstanceRead
+         * @description A container noticed removed in the last 7 days. Its snapshots are kept.
+         */
+        RemovedInstanceRead: {
+            /** Name */
+            name: string;
+            /** Image */
+            image: string | null;
+            /** Model */
+            model: string | null;
+            /**
+             * Last Seen
+             * Format: date-time
+             */
+            last_seen: string;
+            /**
+             * Removed At
+             * Format: date-time
+             */
+            removed_at: string;
+        };
         /** SSHConfigImport */
         SSHConfigImport: {
             /** Config */
@@ -982,6 +1174,24 @@ export interface components {
             private_key?: string | null;
             /** Passphrase */
             passphrase?: string | null;
+        };
+        /**
+         * ServerCountsRead
+         * @description A workspace's watched servers (jump hosts aren't watched), by how they're doing.
+         */
+        ServerCountsRead: {
+            /** Total */
+            total: number;
+            /** Up */
+            up: number;
+            /** Not Tested */
+            not_tested: number;
+            /** Unreachable */
+            unreachable: number;
+            /** Trouble */
+            trouble: number;
+            /** Docker Problem */
+            docker_problem: number;
         };
         /** ServerCreate */
         ServerCreate: {
@@ -1103,6 +1313,11 @@ export interface components {
             read_at: string | null;
             /** Instances */
             instances: components["schemas"]["WatchedInstanceRead"][];
+            /**
+             * Removed
+             * @default []
+             */
+            removed: components["schemas"]["RemovedInstanceRead"][];
             /** Gpus */
             gpus: components["schemas"]["GpuRead"][] | null;
             /** Gpu Message */
@@ -1124,6 +1339,102 @@ export interface components {
              * Format: password
              */
             password: string;
+        };
+        /** SnapshotCompareRead */
+        SnapshotCompareRead: {
+            from_snapshot: components["schemas"]["SnapshotDetailRead"];
+            to_snapshot: components["schemas"]["SnapshotDetailRead"];
+            /** Differences */
+            differences: components["schemas"]["DifferenceRead"][];
+        };
+        /** SnapshotDetailRead */
+        SnapshotDetailRead: {
+            /** Id */
+            id: number;
+            /** Instance */
+            instance: string;
+            /** Model */
+            model: string | null;
+            kind: components["schemas"]["SnapshotKind"];
+            /**
+             * Happened At
+             * Format: date-time
+             */
+            happened_at: string;
+            /**
+             * Noticed At
+             * Format: date-time
+             */
+            noticed_at: string;
+            /** Last Seen */
+            last_seen: string | null;
+            /** Container Id */
+            container_id: string | null;
+            /** Differences */
+            differences: components["schemas"]["DifferenceRead"][];
+            /** Image */
+            image: string | null;
+            /** Image Id */
+            image_id: string | null;
+            /** Vllm Version */
+            vllm_version: string | null;
+            /** Created At */
+            created_at: string | null;
+            /** Started At */
+            started_at: string | null;
+            /** Restart Count */
+            restart_count: number | null;
+            /** Command */
+            command: string | null;
+            /** Covers */
+            covers: string;
+            /** Compose */
+            compose: string | null;
+            /** Env Hidden */
+            env_hidden: string | null;
+            /** Env Values Hidden */
+            env_values_hidden: boolean;
+            /** Key Fingerprint */
+            key_fingerprint: string | null;
+        };
+        /** SnapshotEntryRead */
+        SnapshotEntryRead: {
+            /** Id */
+            id: number;
+            /** Instance */
+            instance: string;
+            /** Model */
+            model: string | null;
+            kind: components["schemas"]["SnapshotKind"];
+            /**
+             * Happened At
+             * Format: date-time
+             */
+            happened_at: string;
+            /**
+             * Noticed At
+             * Format: date-time
+             */
+            noticed_at: string;
+            /** Last Seen */
+            last_seen: string | null;
+            /** Container Id */
+            container_id: string | null;
+            /** Differences */
+            differences: components["schemas"]["DifferenceRead"][];
+        };
+        /**
+         * SnapshotKind
+         * @description What a snapshot records about its instance.
+         * @enum {string}
+         */
+        SnapshotKind: "first_seen" | "recreated" | "recreated_same" | "changed" | "removed";
+        /** SnapshotPageRead */
+        SnapshotPageRead: {
+            /** Entries */
+            entries: components["schemas"]["SnapshotEntryRead"][];
+            /** Next Before */
+            next_before: string | null;
         };
         /** TokenResponse */
         TokenResponse: {
@@ -1264,11 +1575,31 @@ export interface components {
             usage: components["schemas"]["UsagePointRead"] | null;
             /** Running Trend */
             running_trend: (number | null)[];
+            /** Changed At */
+            changed_at: string | null;
         };
         /** WorkspaceCreate */
         WorkspaceCreate: {
             /** Name */
             name: string;
+            /** Icon */
+            icon?: string | null;
+        };
+        /**
+         * WorkspaceOverviewRead
+         * @description What a workspace's card on the landing page needs.
+         */
+        WorkspaceOverviewRead: {
+            /** Workspace Id */
+            workspace_id: number;
+            servers: components["schemas"]["ServerCountsRead"];
+            /** Instances */
+            instances: {
+                [key: string]: number;
+            };
+            gpus: components["schemas"]["GpuTotalsRead"] | null;
+            /** Models */
+            models: string[];
         };
         /** WorkspaceRead */
         WorkspaceRead: {
@@ -1276,6 +1607,8 @@ export interface components {
             id: number;
             /** Name */
             name: string;
+            /** Icon */
+            icon: string | null;
             role: components["schemas"]["WorkspaceRole"];
             /** Member Count */
             member_count: number;
@@ -1291,10 +1624,15 @@ export interface components {
          * @enum {string}
          */
         WorkspaceRole: "viewer" | "operator" | "owner";
-        /** WorkspaceUpdate */
+        /**
+         * WorkspaceUpdate
+         * @description Partial update: omitted fields are left unchanged; a null icon goes back to the default.
+         */
         WorkspaceUpdate: {
             /** Name */
-            name: string;
+            name?: string | null;
+            /** Icon */
+            icon?: string | null;
         };
     };
     responses: never;
@@ -1359,6 +1697,24 @@ export interface operations {
         };
     };
     logout_api_auth_logout_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    logout_everywhere_api_auth_logout_everywhere_post: {
         parameters: {
             query?: never;
             header?: never;
@@ -1844,6 +2200,26 @@ export interface operations {
             };
         };
     };
+    list_overviews_api_workspaces_overview_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkspaceOverviewRead"][];
+                };
+            };
+        };
+    };
     get_workspace_api_workspaces__workspace_id__get: {
         parameters: {
             query?: never;
@@ -1904,7 +2280,7 @@ export interface operations {
             };
         };
     };
-    rename_workspace_api_workspaces__workspace_id__patch: {
+    update_workspace_api_workspaces__workspace_id__patch: {
         parameters: {
             query?: never;
             header?: never;
@@ -2687,6 +3063,182 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ServerWatchRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_server_snapshots_api_workspaces__workspace_id__servers__server_id__snapshots_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                before?: string | null;
+            };
+            header?: never;
+            path: {
+                server_id: number;
+                workspace_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SnapshotPageRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_instance_snapshots_api_workspaces__workspace_id__servers__server_id__instances__name__snapshots_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                before?: string | null;
+            };
+            header?: never;
+            path: {
+                server_id: number;
+                name: string;
+                workspace_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SnapshotPageRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    compare_snapshots_api_workspaces__workspace_id__servers__server_id__snapshots_compare_get: {
+        parameters: {
+            query: {
+                from: number;
+                to: number;
+            };
+            header?: never;
+            path: {
+                server_id: number;
+                workspace_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SnapshotCompareRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_snapshot_api_workspaces__workspace_id__servers__server_id__snapshots__snapshot_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server_id: number;
+                snapshot_id: number;
+                workspace_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SnapshotDetailRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    check_key_api_workspaces__workspace_id__servers__server_id__snapshots__snapshot_id__check_key_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                server_id: number;
+                snapshot_id: number;
+                workspace_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CheckKeyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CheckKeyRead"];
                 };
             };
             /** @description Validation Error */

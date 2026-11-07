@@ -12,6 +12,7 @@
   import { admin, loadPendingSignups } from "$lib/admin.svelte";
   import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
   import NewWorkspaceDialog from "$lib/components/NewWorkspaceDialog.svelte";
+  import WorkspaceIcon from "$lib/components/WorkspaceIcon.svelte";
   import { duration, easeOut } from "$lib/motion";
   import { isOwner } from "$lib/permissions";
   import { followLink, router } from "$lib/router.svelte";
@@ -25,6 +26,8 @@
 
   let creating = $state(false);
   let confirmSignOut = $state(false);
+  // The workspace row under the pointer or focus: its icon plays.
+  let hovered = $state<number | null>(null);
   let folded = $state<Record<Section, boolean>>({ workspaces: false, system: false, ...readFolded() });
 
   const isAdmin = $derived(session.user?.role === "admin");
@@ -105,7 +108,10 @@
           {#each workspaces.list as workspace (workspace.id)}
             {@const open = workspace.slug === currentWorkspace}
             <li>
-              <a href={`/workspaces/${workspace.slug}`} onclick={followLink} class={itemClass(open)}>
+              <a href={`/workspaces/${workspace.slug}`} onclick={followLink} class={itemClass(open)}
+                 onpointerenter={() => (hovered = workspace.id)} onpointerleave={() => (hovered = null)}
+                 onfocus={() => (hovered = workspace.id)} onblur={() => (hovered = null)}>
+                <WorkspaceIcon name={workspace.icon} size={16} animate={hovered === workspace.id} />
                 <span class="truncate">{workspace.name}</span>
               </a>
               {#if open}

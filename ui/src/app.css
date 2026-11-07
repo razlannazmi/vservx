@@ -187,3 +187,31 @@
 		scroll-behavior: auto !important;
 	}
 }
+
+/* Every scrollbar in the app, the page's included: thin, no track, a muted thumb that firms up while
+   the pointer is over its box. Standard properties for Chrome and Firefox, the -webkit- ones for Safari.
+   Set on every element, since scrollbar-color is inherited and a hovered box shouldn't firm up its children's. */
+@layer base {
+	* {
+		scrollbar-width: thin;
+		scrollbar-color: color-mix(in oklab, var(--muted-foreground) 35%, transparent) transparent;
+	}
+	*:hover {
+		scrollbar-color: color-mix(in oklab, var(--muted-foreground) 65%, transparent) transparent;
+	}
+	::-webkit-scrollbar {
+		width: 6px;
+		height: 6px;
+	}
+	::-webkit-scrollbar-track,
+	::-webkit-scrollbar-corner {
+		background: transparent;
+	}
+	::-webkit-scrollbar-thumb {
+		border-radius: 9999px;
+		background: color-mix(in oklab, var(--muted-foreground) 35%, transparent);
+	}
+	*:hover::-webkit-scrollbar-thumb {
+		background: color-mix(in oklab, var(--muted-foreground) 65%, transparent);
+	}
+}

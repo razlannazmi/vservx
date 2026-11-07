@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 
 from api.auth import get_current_user
-from api.routers import accounts, admin, auth, database, health, servers, ssh_keys, watch, workspaces
+from api.routers import accounts, admin, auth, database, health, servers, snapshots, ssh_keys, watch, workspaces
 from api.service.database import require_current_database
 
 router = APIRouter(prefix="/api")
@@ -20,4 +20,5 @@ protected.include_router(workspaces.router)
 protected.include_router(servers.router)
 protected.include_router(ssh_keys.router)
 protected.include_router(watch.router)
+protected.include_router(snapshots.router)
 router.include_router(protected)

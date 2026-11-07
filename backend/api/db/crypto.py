@@ -12,6 +12,7 @@ from sqlalchemy.types import TypeDecorator
 logger = logging.getLogger(__name__)
 
 _fernet: Fernet | None = None
+_key: bytes | None = None
 
 
 def load_or_create_key(path: Path) -> tuple[bytes, bool]:
@@ -32,10 +33,18 @@ def load_or_create_key(path: Path) -> tuple[bytes, bool]:
 
 def init_crypto(key_path: Path) -> bool:
     """Load the encryption key. Returns True if a new key was generated."""
-    global _fernet
+    global _fernet, _key
     key, created = load_or_create_key(key_path)
     _fernet = Fernet(key)
+    _key = key
     return created
+
+
+def current_key() -> bytes:
+    """The key file's key, for deriving other keys from (the API key fingerprint's HMAC key)."""
+    if _key is None:
+        raise RuntimeError("init_crypto() must be called before using the key")
+    return _key
 
 
 def _get_fernet() -> Fernet:
