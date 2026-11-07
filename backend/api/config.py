@@ -12,7 +12,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="VSERVX_", env_file=".env", extra="ignore")
 
     host: str = "127.0.0.1"
-    port: int = 8000
+    # "SERV" (S=5, E=3, R=2, V=5), and clear of vLLM's own default, 8000.
+    port: int = 5325
     data_dir: Path = Path.home() / ".config" / "vservx"
     # Other origins allowed to call the API with the session cookie. None by default: the built
     # UI is served same-origin, and the Vite dev server proxies /api.

@@ -11,6 +11,6 @@ export default defineConfig({
   },
   server: {
     // The browser sees one origin in development too, so the session cookie just works.
-    proxy: { '/api': 'http://127.0.0.1:8000' },
+    proxy: { '/api': 'http://127.0.0.1:5325' },
   },
 })

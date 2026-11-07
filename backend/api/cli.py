@@ -1,4 +1,4 @@
-"""The vservx command line: `vservx db status` and `vservx db upgrade`."""
+"""The vservx command line: `vservx serve`, `vservx db status` and `vservx db upgrade`."""
 
 import argparse
 import sys
@@ -39,9 +39,27 @@ def _upgrade(db_path: Path) -> int:
     return 0
 
 
+def _serve(host: str, port: int, forwarded_allow_ips: str | None) -> int:
+    # Imported here so `vservx db` doesn't load the web app.
+    import uvicorn
+
+    # One process, no reload: each process watches every server. None leaves uvicorn's own
+    # default, the FORWARDED_ALLOW_IPS environment variable or else 127.0.0.1 and ::1.
+    uvicorn.run("api.main:app", host=host, port=port, forwarded_allow_ips=forwarded_allow_ips)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="vservx")
     commands = parser.add_subparsers(dest="command", required=True)
+    serve = commands.add_parser("serve", help="run vservx: the API and the built web app, without auto-reload")
+    serve.add_argument("--host", help="address to listen on (default: VSERVX_HOST, or 127.0.0.1)")
+    serve.add_argument("--port", type=int, help="port to listen on (default: VSERVX_PORT, or 5325)")
+    serve.add_argument(
+        "--forwarded-allow-ips", metavar="IPS",
+        help="comma-separated addresses of reverse proxies trusted to set X-Forwarded-For and "
+             "X-Forwarded-Proto, or * for any (default: FORWARDED_ALLOW_IPS, or 127.0.0.1,::1)",
+    )
     db = commands.add_parser("db", help="database status and upgrades")
     db_commands = db.add_subparsers(dest="action", required=True)
     db_commands.add_parser("status", help="show whether the database needs an upgrade")
@@ -49,6 +67,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     settings = get_settings()
+    if args.command == "serve":
+        host = settings.host if args.host is None else args.host
+        port = settings.port if args.port is None else args.port
+        return _serve(host, port, args.forwarded_allow_ips)
+
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     action = _status if args.action == "status" else _upgrade
     try:

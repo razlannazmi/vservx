@@ -193,5 +193,6 @@ app = create_app()
 
 
 if __name__ == "__main__":
+    # Development only: reloads on every code change. Run `vservx serve` in production.
     settings = get_settings()
     uvicorn.run("api.main:app", host=settings.host, port=settings.port, reload=True)

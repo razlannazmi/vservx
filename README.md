@@ -66,7 +66,7 @@ vservx remembers how each vLLM container was launched, so a container that's gon
 - **The sign-up switch:** an admin can close sign-up under Admin → Accounts. The sign-in page then has no "Create an account" link.
 - **Admin or member:** admins approve sign-ups, make or remove admins, disable accounts and set new passwords, see every workspace and change its owner, and run database upgrades. Everyone else is a member. vservx always keeps at least one active admin.
 - **Sessions:** signing in to the web app sets an HttpOnly session cookie that lasts 7 days (`VSERVX_ACCESS_TOKEN_MINUTES`). Changing your password signs out your other sessions, and Account → Sign out everywhere signs out all of them, this one included. API clients can use the bearer token from `POST /api/auth/login` instead.
-- **Password guessing:** after 20 failed sign-ins from one address within 15 minutes, or 100 for one email from any number of addresses, sign-in answers 429 until the oldest of them is 15 minutes old, without checking the password. Sign-up allows 5 requests per address per hour. The counts are kept in memory, so a restart clears them. Behind a reverse proxy, set `FORWARDED_ALLOW_IPS` to the proxy's address so uvicorn reads each client's address from `X-Forwarded-For`; otherwise every client counts as the proxy.
+- **Password guessing:** after 20 failed sign-ins from one address within 15 minutes, or 100 for one email from any number of addresses, sign-in answers 429 until the oldest of them is 15 minutes old, without checking the password. Sign-up allows 5 requests per address per hour. The counts are kept in memory, so a restart clears them. Behind a reverse proxy on another machine, give `vservx serve --forwarded-allow-ips` the proxy's address ([Run in production](#run-in-production)); otherwise every client counts as the proxy.
 
 ### Workspaces
 
@@ -128,21 +128,19 @@ cp .env.example .env             # optional; Windows: copy .env.example .env
 
 ### Run
 
-From `backend/`:
+For development, from `backend/`:
 
 ```bash
 python -m api.main
 ```
 
-The API starts on http://127.0.0.1:8000 with auto-reload, and interactive docs are at http://127.0.0.1:8000/docs.
+The API starts on http://127.0.0.1:5325 with auto-reload, and interactive docs are at http://127.0.0.1:5325/docs. Production setup: [Run in production](#run-in-production).
 
 On first start, vservx creates an admin account and prints its generated password to the console once. To choose the credentials yourself, set `VSERVX_ADMIN_EMAIL` and `VSERVX_ADMIN_PASSWORD` before the first start.
 
-Run a single vservx process. Each process watches every server, so several workers would watch them all several times over.
-
 ### Run the web app
 
-The web app lives in `ui/` and needs Node.js 20.19 or newer. In development, start the backend on port 8000 as above, then from `ui/`:
+The web app lives in `ui/` and needs Node.js 20.19 or newer. In development, start the backend on port 5325 as above, then from `ui/`:
 
 ```bash
 npm install
@@ -157,13 +155,31 @@ For production, build it once from `ui/`:
 npm run build
 ```
 
-FastAPI then serves `ui/dist` at http://127.0.0.1:8000 next to the API, so vservx stays one process. Set `VSERVX_UI_DIR` to serve a build from somewhere else.
+FastAPI then serves `ui/dist` at http://127.0.0.1:5325 next to the API, so vservx stays one process. Set `VSERVX_UI_DIR` to serve a build from somewhere else.
 
 After changing the API, regenerate the web app's types from `ui/` (it runs the backend's Python from `.venv` to read the OpenAPI schema):
 
 ```bash
 npm run gen:api
 ```
+
+### Run in production
+
+Build the web app (above), then start vservx without auto-reload:
+
+```bash
+vservx serve
+```
+
+It listens on `VSERVX_HOST` and `VSERVX_PORT` (127.0.0.1:5325 by default); `--host` and `--port` override them. Run a single vservx process. Each process watches every server, so several workers would watch them all several times over.
+
+**Behind a reverse proxy.** vservx reads `X-Forwarded-For` and `X-Forwarded-Proto` only from the addresses in `--forwarded-allow-ips` (or the `FORWARDED_ALLOW_IPS` environment variable), `127.0.0.1,::1` by default. A proxy on the same machine needs nothing more. For one elsewhere, such as in another container, listen on an outside address and pass the proxy's:
+
+```bash
+vservx serve --host 0.0.0.0 --forwarded-allow-ips 10.0.0.5
+```
+
+Without it, every request looks like plain HTTP from the proxy: the session cookie isn't marked `Secure`, and sign-in limits count every client as one. `*` trusts any address; use it only when nothing but the proxy can reach vservx.
 
 ### Test
 
