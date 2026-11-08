@@ -114,7 +114,33 @@
   }
 </script>
 
-<div class="flex-1 overflow-y-auto p-6">
+{#snippet actions(account: AccountRead)}
+  <DropdownMenu.Root>
+    <DropdownMenu.Trigger class={buttonVariants({ variant: "ghost", size: "icon-sm" })} aria-label={`Actions for ${account.name}`}>
+      <EllipsisIcon />
+    </DropdownMenu.Trigger>
+    <DropdownMenu.Content align="end">
+      <DropdownMenu.Item
+        onSelect={() =>
+          update(account, { role: account.role === "admin" ? "member" : "admin" }, "Couldn't change the role")}
+      >
+        {account.role === "admin" ? "Remove admin" : "Make admin"}
+      </DropdownMenu.Item>
+      <DropdownMenu.Item
+        onSelect={() => update(account, { is_active: !account.is_active }, "Couldn't change the account")}
+      >
+        {account.is_active ? "Disable" : "Enable"}
+      </DropdownMenu.Item>
+      {#if account.id !== me}
+        <!-- Your own password changes on the Account page, which checks the current one. -->
+        <DropdownMenu.Separator />
+        <DropdownMenu.Item onSelect={() => askForPassword(account)}>Set new password…</DropdownMenu.Item>
+      {/if}
+    </DropdownMenu.Content>
+  </DropdownMenu.Root>
+{/snippet}
+
+<div class="flex-1 overflow-y-auto p-4 md:p-6">
   <div class="mx-auto max-w-5xl space-y-6">
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div class="space-y-1.5">
@@ -157,7 +183,27 @@
 
     <section class="space-y-4" aria-labelledby="accounts-all">
       <h2 id="accounts-all" class="font-medium">All accounts</h2>
-      <div class="rounded-xl border bg-card">
+      <!-- Phones: one row per account, its details stacked, the same actions menu. -->
+      <ul class="divide-y rounded-xl border bg-card md:hidden">
+        {#each approved as account (account.id)}
+          <li class="px-4 py-3 text-sm">
+            <div class="flex items-center justify-between gap-3">
+              <p class="min-w-0 truncate font-medium">
+                {account.name}{#if account.id === me}{" "}<span class="font-normal text-muted-foreground">(you)</span>{/if}
+              </p>
+              {@render actions(account)}
+            </div>
+            <p class="font-mono text-xs break-all text-muted-foreground">{account.email}</p>
+            <p class="mt-0.5 text-xs text-muted-foreground">
+              {account.role === "admin" ? "Admin" : "Member"} · {account.is_active ? "Active" : "Disabled"} ·
+              <span title={account.last_login_at ? localDateTime(account.last_login_at) : undefined}>
+                last sign-in {account.last_login_at ? relativeTime(account.last_login_at) : "never"}
+              </span>
+            </p>
+          </li>
+        {/each}
+      </ul>
+      <div class="hidden rounded-xl border bg-card md:block">
         <Table.Root>
           <Table.Header>
             <Table.Row>
@@ -181,31 +227,7 @@
                 <Table.Cell title={account.last_login_at ? localDateTime(account.last_login_at) : undefined}>
                   {account.last_login_at ? relativeTime(account.last_login_at) : "never"}
                 </Table.Cell>
-                <Table.Cell class="pr-4 text-right">
-                  <DropdownMenu.Root>
-                    <DropdownMenu.Trigger class={buttonVariants({ variant: "ghost", size: "icon-sm" })} aria-label={`Actions for ${account.name}`}>
-                      <EllipsisIcon />
-                    </DropdownMenu.Trigger>
-                    <DropdownMenu.Content align="end">
-                      <DropdownMenu.Item
-                        onSelect={() =>
-                          update(account, { role: account.role === "admin" ? "member" : "admin" }, "Couldn't change the role")}
-                      >
-                        {account.role === "admin" ? "Remove admin" : "Make admin"}
-                      </DropdownMenu.Item>
-                      <DropdownMenu.Item
-                        onSelect={() => update(account, { is_active: !account.is_active }, "Couldn't change the account")}
-                      >
-                        {account.is_active ? "Disable" : "Enable"}
-                      </DropdownMenu.Item>
-                      {#if account.id !== me}
-                        <!-- Your own password changes on the Account page, which checks the current one. -->
-                        <DropdownMenu.Separator />
-                        <DropdownMenu.Item onSelect={() => askForPassword(account)}>Set new password…</DropdownMenu.Item>
-                      {/if}
-                    </DropdownMenu.Content>
-                  </DropdownMenu.Root>
-                </Table.Cell>
+                <Table.Cell class="pr-4 text-right">{@render actions(account)}</Table.Cell>
               </Table.Row>
             {/each}
           </Table.Body>

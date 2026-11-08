@@ -52,7 +52,7 @@
   }
 </script>
 
-<div class="flex-1 overflow-y-auto p-6">
+<div class="flex-1 overflow-y-auto p-4 md:p-6">
   <div class="mx-auto max-w-5xl space-y-6">
     <header class="space-y-1.5">
       <h1 class="text-xl font-semibold tracking-tight">Workspaces</h1>
@@ -64,7 +64,26 @@
     {#if loaded && list.length === 0}
       <p class="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">No workspaces yet</p>
     {:else if list.length > 0}
-      <div class="rounded-xl border bg-card">
+      <!-- Phones: one row per workspace, its details stacked. -->
+      <ul class="divide-y rounded-xl border bg-card md:hidden">
+        {#each list as workspace (workspace.id)}
+          <li class="px-4 py-3 text-sm">
+            <p class="truncate font-medium">{workspace.name}</p>
+            <p class="text-xs text-muted-foreground">
+              {#if workspace.owner}
+                {workspace.owner.name} <span class="font-mono break-all">{workspace.owner.email}</span>
+              {:else}
+                no owner
+              {/if}
+            </p>
+            <p class="text-xs text-muted-foreground tabular-nums">
+              {workspace.member_count === 1 ? "1 member" : `${workspace.member_count} members`}
+            </p>
+            <Button size="sm" variant="outline" class="mt-2" onclick={() => askToChange(workspace)}>Change owner</Button>
+          </li>
+        {/each}
+      </ul>
+      <div class="hidden rounded-xl border bg-card md:block">
         <Table.Root>
           <Table.Header>
             <Table.Row>

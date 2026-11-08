@@ -90,7 +90,7 @@
 {#if detail.key_fingerprint}
   <div class="space-y-2 text-xs">
     <div class="flex flex-wrap items-center gap-2">
-      <span>API key fingerprint <code class="font-mono">{detail.key_fingerprint}</code></span>
+      <span>API key fingerprint <code class="font-mono break-all">{detail.key_fingerprint}</code></span>
       {#if !checking}
         <button
           type="button"

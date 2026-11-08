@@ -84,7 +84,7 @@
   }
 </script>
 
-<div class="flex-1 overflow-y-auto p-6">
+<div class="flex-1 overflow-y-auto p-4 md:p-6">
   <div class="mx-auto max-w-3xl space-y-6">
     <header class="flex flex-wrap items-end justify-between gap-3">
       <div class="space-y-1.5">
@@ -141,14 +141,15 @@
                 <Table.Row>
                   <Table.Head class="pl-4"><span class="sr-only">Action</span></Table.Head>
                   {#each ROLES as role (role)}
-                    <Table.Head class="w-24 text-center last:pr-4">{ROLE_NAMES[role]}</Table.Head>
+                    <Table.Head class="text-center last:pr-4 md:w-24">{ROLE_NAMES[role]}</Table.Head>
                   {/each}
                 </Table.Row>
               </Table.Header>
               <Table.Body>
                 {#each ROLE_COVERAGE as row (row.label)}
                   <Table.Row>
-                    <Table.Cell class="pl-4">{row.label}</Table.Cell>
+                    <!-- The label wraps, so on a phone the table fits instead of scrolling sideways. -->
+                    <Table.Cell class="pl-4 whitespace-normal">{row.label}</Table.Cell>
                     {#each ROLES as role (role)}
                       <Table.Cell class="text-center last:pr-4">
                         {#if row.roles.includes(role)}

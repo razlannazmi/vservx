@@ -86,7 +86,7 @@
   }
 </script>
 
-<div class="flex-1 overflow-y-auto p-6">
+<div class="flex-1 overflow-y-auto p-4 md:p-6">
   <div class="mx-auto max-w-2xl space-y-6">
     <header class="space-y-1.5">
       <h1 class="text-xl font-semibold tracking-tight">Settings</h1>
@@ -125,7 +125,10 @@
       {:else}
         <div class="flex gap-2">
           <Select.Root type="single" bind:value={heir}>
-            <Select.Trigger class="w-full" aria-label="New owner">{heirMember ? heirMember.name : "Choose a member"}</Select.Trigger>
+            <!-- min-w-0 and truncate: a long name shortens instead of widening the row past a phone's edge. -->
+            <Select.Trigger class="w-full min-w-0" aria-label="New owner">
+              <span class="truncate">{heirMember ? heirMember.name : "Choose a member"}</span>
+            </Select.Trigger>
             <Select.Content>
               {#each candidates as member (member.user_id)}
                 <Select.Item value={String(member.user_id)} label={`${member.name} · ${member.email}`} />

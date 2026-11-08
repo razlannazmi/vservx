@@ -50,12 +50,12 @@
   }
 </script>
 
-<div class="flex-1 overflow-y-auto p-6">
+<div class="flex-1 overflow-y-auto p-4 md:p-6">
   <div class="mx-auto max-w-2xl space-y-6">
     <header class="space-y-1.5">
       <h1 class="text-xl font-semibold tracking-tight">Your account</h1>
       <p class="text-sm text-muted-foreground">
-        <span class="font-mono">{session.user?.email}</span> · {session.user?.role === "admin" ? "Admin" : "Member"}
+        <span class="font-mono break-all">{session.user?.email}</span> · {session.user?.role === "admin" ? "Admin" : "Member"}
       </p>
     </header>
 

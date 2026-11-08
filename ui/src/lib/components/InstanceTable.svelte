@@ -3,14 +3,17 @@
   import { untrack } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
   import type { InstanceState, RemovedInstanceRead, WatchedInstanceRead } from "$lib/api/client";
+  import InstanceCard from "$lib/components/InstanceCard.svelte";
   import Sparkline from "$lib/components/Sparkline.svelte";
   import { Input } from "$lib/components/ui/input/index.js";
+  import { phone } from "$lib/layout.svelte";
   import { FLASH_HOLD_MS } from "$lib/motion";
   import { followLink } from "$lib/router.svelte";
   import { TONE_DOT, TONE_FLASH } from "$lib/servers";
   import { changedLabel } from "$lib/snapshots";
   import {
     changedStates,
+    dayMonth,
     formatNumber,
     formatSeconds,
     gpuLabel,
@@ -23,6 +26,7 @@
     matchesQuery,
     shortModel,
     type InstanceFilter,
+    type InstanceRow,
   } from "$lib/watch";
 
   // One row per container, in the order given (by name), each a link to that instance.
@@ -74,7 +78,6 @@
   );
   // Searching or picking a chip looks through the stopped ones too, so the fold only applies to the plain list.
   const folding = $derived(activeFilter === "all" && activeQuery === "");
-  type Row = { removed: false; instance: WatchedInstanceRead } | { removed: true; instance: RemovedInstanceRead };
   const rows = $derived(
     [
       ...instances
@@ -84,7 +87,7 @@
             matchesQuery(each, activeQuery) &&
             (!folding || showStopped || each.state !== "stopped"),
         )
-        .map((instance): Row => ({ removed: false, instance })),
+        .map((instance): InstanceRow => ({ removed: false, instance })),
       ...removed
         .filter(
           (each) =>
@@ -92,7 +95,7 @@
             matchesRemoved(each, activeQuery) &&
             (!folding || showStopped),
         )
-        .map((instance): Row => ({ removed: true, instance })),
+        .map((instance): InstanceRow => ({ removed: true, instance })),
     ].sort((a, b) => (a.instance.name < b.instance.name ? -1 : a.instance.name > b.instance.name ? 1 : 0)),
   );
 
@@ -100,10 +103,6 @@
   function matchesRemoved(each: RemovedInstanceRead, words: string): boolean {
     const text = `${each.name} ${each.model ?? ""}`.toLowerCase();
     return words.toLowerCase().split(/\s+/).filter(Boolean).every((word) => text.includes(word));
-  }
-
-  function dayMonth(iso: string): string {
-    return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
   }
 
   const cell = "px-2 py-2 whitespace-nowrap";
@@ -195,6 +194,36 @@
   </div>
 {/if}
 
+{#snippet noMatch()}
+  <p class="px-2 py-6 text-center text-xs text-muted-foreground">
+    No containers match ·
+    <button
+      type="button"
+      class="rounded-sm underline underline-offset-4 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
+      onclick={clearFilters}
+    >
+      show all
+    </button>
+  </p>
+{/snippet}
+
+<!-- On a phone, one card per instance: the page scrolls, not a box inside it, and nothing hides off to the side. -->
+{#if phone.current}
+  <ul class="space-y-1.5" aria-label="Instances">
+    {#each rows as row (row.instance.name)}
+      {@const name = row.instance.name}
+      <InstanceCard
+        {row}
+        current={name === selected}
+        flashing={flashing.has(name)}
+        href={hrefFor(name)}
+        onpick={(event) => pick(event, name)}
+        onsnapshots={() => onsnapshots(name)}
+      />
+    {/each}
+  </ul>
+  {#if rows.length === 0}{@render noMatch()}{/if}
+{:else}
 <!-- Rows are links, so the table is a grid: each row spans it as a subgrid. About eight rows show; the rest scroll under a sticky header.
      All ten columns need about 50rem without wrapping; narrower than that, the trend column goes (the open instance's charts are below). -->
 <div bind:this={scroller} class="relative max-h-[19.5rem] overflow-auto">
@@ -313,19 +342,9 @@
       {/each}
     </div>
   </div>
-  {#if rows.length === 0}
-    <p class="px-2 py-6 text-center text-xs text-muted-foreground">
-      No containers match ·
-      <button
-        type="button"
-        class="rounded-sm underline underline-offset-4 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-        onclick={clearFilters}
-      >
-        show all
-      </button>
-    </p>
-  {/if}
+  {#if rows.length === 0}{@render noMatch()}{/if}
 </div>
+{/if}
 
 {#if folding && counts.stopped > 0 && counts.stopped < total}
   <button

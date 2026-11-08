@@ -4,6 +4,7 @@
   import { fly } from "svelte/transition";
   import AppShell from "$lib/components/AppShell.svelte";
   import { Toaster } from "$lib/components/ui/sonner/index.js";
+  import { phone } from "$lib/layout.svelte";
   import { navigate, router } from "$lib/router.svelte";
   import { duration, easeOut } from "$lib/motion";
   import { guardRoute, loadSession, session } from "$lib/session.svelte";
@@ -45,6 +46,11 @@
   // next loads. Moving between servers stays on the same page; the details have their own motion.
   const pageKey = $derived(`${route.name}:${workspace?.id ?? ""}`);
 
+  // The phone tabs keep leading into this workspace after you leave it for your account or an admin page.
+  $effect(() => {
+    if (workspace) workspaces.lastId = workspace.id;
+  });
+
   // A workspace that isn't in the list (gone, renamed, or never yours): check once more, then go home.
   $effect(() => {
     if ("workspaceSlug" in route && workspaces.loaded && workspace === null) void checkWorkspace(route.workspaceSlug);
@@ -59,7 +65,8 @@
 </script>
 
 <ModeWatcher />
-<Toaster />
+<!-- On phones toasts drop from the top, clear of the tabs. -->
+<Toaster position={phone.current ? "top-center" : "bottom-right"} />
 
 {#if !session.loaded}
   <!-- Nothing until we know who this is, so no page flashes by. -->
@@ -93,7 +100,7 @@
             {:else if route.name === "settings" && isOwner(workspace.role)}
               <WorkspaceSettings {workspace} />
             {:else if route.name === "settings"}
-              <div class="p-6">
+              <div class="p-4 md:p-6">
                 <h1 class="text-xl font-semibold">Settings</h1>
                 <p class="text-sm text-muted-foreground">Only the workspace's owner can change its settings.</p>
               </div>
@@ -108,7 +115,7 @@
         {:else if isAdmin && route.name === "admin-database"}
           <AdminDatabase />
         {:else}
-          <div class="p-6">
+          <div class="p-4 md:p-6">
             <h1 class="text-xl font-semibold">Page not found</h1>
             <p class="text-sm text-muted-foreground">There's nothing at this address.</p>
           </div>
