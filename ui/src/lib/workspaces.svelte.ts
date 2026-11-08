@@ -7,7 +7,12 @@ import { withSlugs } from "$lib/slug";
 /** A workspace and its address in the app, made from its name. */
 export type Workspace = WorkspaceRead & { slug: string };
 
-export const workspaces = $state<{ list: Workspace[]; loaded: boolean }>({ list: [], loaded: false });
+// lastId: the workspace last on screen, so the phone tabs know where to point off a workspace page.
+export const workspaces = $state<{ list: Workspace[]; loaded: boolean; lastId: number | null }>({
+  list: [],
+  loaded: false,
+  lastId: null,
+});
 
 export async function loadWorkspaces(): Promise<void> {
   const { data } = await api.GET("/api/workspaces");

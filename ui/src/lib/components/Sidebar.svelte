@@ -9,15 +9,15 @@
   import UserIcon from "@lucide/svelte/icons/user";
   import { mode, toggleMode } from "mode-watcher";
   import { slide } from "svelte/transition";
-  import { admin, loadPendingSignups } from "$lib/admin.svelte";
-  import ConfirmDialog from "$lib/components/ConfirmDialog.svelte";
+  import { admin } from "$lib/admin.svelte";
   import NewWorkspaceDialog from "$lib/components/NewWorkspaceDialog.svelte";
+  import SignOutDialog from "$lib/components/SignOutDialog.svelte";
   import WorkspaceIcon from "$lib/components/WorkspaceIcon.svelte";
   import { duration, easeOut } from "$lib/motion";
-  import { isOwner } from "$lib/permissions";
+  import { SYSTEM_PAGES, workspacePages } from "$lib/nav";
   import { followLink, router } from "$lib/router.svelte";
-  import { session, signOut } from "$lib/session.svelte";
-  import { workspaces, type Workspace } from "$lib/workspaces.svelte";
+  import { session } from "$lib/session.svelte";
+  import { workspaces } from "$lib/workspaces.svelte";
 
   type Section = "workspaces" | "system";
 
@@ -35,10 +35,6 @@
   const currentWorkspace = $derived("workspaceSlug" in route ? route.workspaceSlug : null);
   const modeLabel = $derived(mode.current === "dark" ? "Switch to light mode" : "Switch to dark mode");
 
-  $effect(() => {
-    if (isAdmin) void loadPendingSignups();
-  });
-
   function readFolded(): Partial<Record<Section, boolean>> {
     try {
       return JSON.parse(localStorage.getItem(FOLDED_KEY) ?? "{}");
@@ -54,17 +50,6 @@
     } catch {
       // Storage can be refused (private windows); folding still works until a reload.
     }
-  }
-
-  function pagesOf(workspace: Workspace) {
-    const base = `/workspaces/${workspace.slug}`;
-    const pages = [
-      { name: "servers", label: "Servers", href: base },
-      { name: "keys", label: "Keys", href: `${base}/keys` },
-      { name: "members", label: "Members", href: `${base}/members` },
-    ];
-    if (isOwner(workspace.role)) pages.push({ name: "settings", label: "Settings", href: `${base}/settings` });
-    return pages;
   }
 
   // Section headings are small capitals with an icon, so they never read as one more link.
@@ -93,7 +78,7 @@
   </h2>
 {/snippet}
 
-<nav aria-label="Main" class="flex h-full w-60 shrink-0 flex-col gap-6 border-r bg-sidebar px-3 py-4 text-sm">
+<nav aria-label="Main" class="hidden h-full w-60 shrink-0 md:flex flex-col gap-6 border-r bg-sidebar px-3 py-4 text-sm">
   <a href="/" onclick={followLink} class="shrink-0 rounded-md px-2 font-mono text-base font-semibold outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring">
     vservx
   </a>
@@ -116,7 +101,7 @@
               </a>
               {#if open}
                 <ul class="mt-0.5 ml-3 space-y-0.5 border-l pl-2" transition:slide={{ duration: duration(200), easing: easeOut }}>
-                  {#each pagesOf(workspace) as page (page.name)}
+                  {#each workspacePages(workspace) as page (page.name)}
                     {@const active = route.name === page.name}
                     <li>
                       <a href={page.href} onclick={followLink} class={itemClass(active)} aria-current={active ? "page" : undefined}>
@@ -144,20 +129,22 @@
         {@render heading("system", "System", SettingsIcon, folded.system && admin.pendingSignups > 0)}
         {#if !folded.system}
           <div id="sidebar-system-items" class="space-y-1" transition:slide={{ duration: duration(200), easing: easeOut }}>
-            <a href="/admin/accounts" onclick={followLink} class={itemClass(route.name === "admin-accounts")}
-               aria-current={route.name === "admin-accounts" ? "page" : undefined}>
-              <span class="flex-1">Accounts</span>
-              {#if admin.pendingSignups > 0}
-                <span class="flex items-center gap-1.5 text-xs font-medium text-sidebar-foreground">
-                  <span class="size-2 rounded-full bg-status-warn" aria-hidden="true"></span>
-                  {admin.pendingSignups} waiting
-                </span>
-              {/if}
-            </a>
-            <a href="/admin/workspaces" onclick={followLink} class={itemClass(route.name === "admin-workspaces")}
-               aria-current={route.name === "admin-workspaces" ? "page" : undefined}>Workspaces</a>
-            <a href="/admin/database" onclick={followLink} class={itemClass(route.name === "admin-database")}
-               aria-current={route.name === "admin-database" ? "page" : undefined}>Database</a>
+            {#each SYSTEM_PAGES as page (page.name)}
+              <a href={page.href} onclick={followLink} class={itemClass(route.name === page.name)}
+                 aria-current={route.name === page.name ? "page" : undefined}>
+                {#if page.name === "admin-accounts"}
+                  <span class="flex-1">{page.label}</span>
+                  {#if admin.pendingSignups > 0}
+                    <span class="flex items-center gap-1.5 text-xs font-medium text-sidebar-foreground">
+                      <span class="size-2 rounded-full bg-status-warn" aria-hidden="true"></span>
+                      {admin.pendingSignups} waiting
+                    </span>
+                  {/if}
+                {:else}
+                  {page.label}
+                {/if}
+              </a>
+            {/each}
           </div>
         {/if}
       </section>
@@ -186,10 +173,4 @@
 </nav>
 
 <NewWorkspaceDialog bind:open={creating} />
-<ConfirmDialog
-  bind:open={confirmSignOut}
-  title="Sign out?"
-  message="You'll need your email and password to sign in again."
-  confirmLabel="Sign out"
-  onConfirm={signOut}
-/>
+<SignOutDialog bind:open={confirmSignOut} />

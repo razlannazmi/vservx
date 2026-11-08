@@ -1,4 +1,5 @@
 <script lang="ts">
+  import ChevronLeftIcon from "@lucide/svelte/icons/chevron-left";
   import HistoryIcon from "@lucide/svelte/icons/history";
   import { tick, untrack } from "svelte";
   import { toast } from "svelte-sonner";
@@ -12,9 +13,10 @@
   import SnapshotDrawer from "$lib/components/SnapshotDrawer.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
   import { clockTime, localDateTime, secondsAgo } from "$lib/format";
+  import { phone } from "$lib/layout.svelte";
   import { duration, easeOut } from "$lib/motion";
   import { every } from "$lib/poll";
-  import { navigate, router } from "$lib/router.svelte";
+  import { followLink, navigate, router } from "$lib/router.svelte";
   import { serverStatus, TONE_DOT, type Tone } from "$lib/servers";
   import { drawerSearch, readDrawer, type DrawerState } from "$lib/snapshots";
   import { HISTORY_MINUTES, WATCH_POLL_MS } from "$lib/watch";
@@ -177,6 +179,14 @@
 
 <article class="space-y-5" aria-labelledby="server-details-name">
   <header class="space-y-2">
+    <!-- Phones show one server at a time; this leads back to the list. -->
+    <a
+      href={base}
+      onclick={followLink}
+      class="-ml-1 inline-flex items-center gap-0.5 rounded-md px-1 text-sm text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring md:hidden"
+    >
+      <ChevronLeftIcon class="size-4" aria-hidden="true" />Servers
+    </a>
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div class="min-w-0 space-y-1">
         <h2 id="server-details-name" class="truncate text-lg font-semibold tracking-tight">{server.name}</h2>
@@ -242,16 +252,20 @@
       class="space-y-5 transition-opacity duration-200 [&>section]:border-t [&>section]:pt-5 {connected ? '' : 'opacity-60'}"
       in:fade={{ duration: duration(150), easing: easeOut }}
     >
-      <!-- GPUs first: a few tiles that say how full the server is, above a list that can grow long. -->
-      {#if current.gpus?.length || current.gpu_message}
-        <CollapsibleSection id="gpus" title={gpuTitle}>
-          {#if current.gpus?.length}
-            <GpuStrip gpus={current.gpus} />
-          {:else}
-            <p class="text-sm text-muted-foreground">{current.gpu_message}</p>
-          {/if}
-        </CollapsibleSection>
-      {/if}
+      <!-- GPUs first: a few tiles that say how full the server is, above a list that can grow long.
+           On a phone they come last, so whether the containers are up is the first thing seen. -->
+      {#snippet gpus()}
+        {#if current.gpus?.length || current.gpu_message}
+          <CollapsibleSection id="gpus" title={gpuTitle}>
+            {#if current.gpus?.length}
+              <GpuStrip gpus={current.gpus} />
+            {:else}
+              <p class="text-sm text-muted-foreground">{current.gpu_message}</p>
+            {/if}
+          </CollapsibleSection>
+        {/if}
+      {/snippet}
+      {#if !phone.current}{@render gpus()}{/if}
 
       {#if current.found_at}
         <CollapsibleSection id="instances" title={`Instances · ${current.instances.length}`}>
@@ -300,6 +314,7 @@
           Looking for instances…
         </p>
       {/if}
+      {#if phone.current}{@render gpus()}{/if}
     </div>
   {/if}
 </article>

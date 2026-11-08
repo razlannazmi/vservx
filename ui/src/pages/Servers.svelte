@@ -7,6 +7,7 @@
   import ServerDetails from "$lib/components/ServerDetails.svelte";
   import ServerDialog from "$lib/components/ServerDialog.svelte";
   import { Button } from "$lib/components/ui/button/index.js";
+  import { phone } from "$lib/layout.svelte";
   import { duration, easeOut } from "$lib/motion";
   import { canOperate } from "$lib/permissions";
   import { every } from "$lib/poll";
@@ -33,6 +34,10 @@
   const jumpHosts = $derived(servers.filter((each) => each.jump_only));
   const selected = $derived(servers.find((each) => each.id === serverId) ?? null);
   const base = $derived(`/workspaces/${workspace.slug}`);
+  // On a phone one column shows at a time: the details for a chosen server, the empty state when there
+  // are none (it has its own "Add server"), otherwise the list.
+  const empty = $derived(loaded && servers.length === 0);
+  const showDetails = $derived(serverId !== null || empty);
 
   onMount(() => {
     void load();
@@ -69,11 +74,12 @@
     await loadSummaries();
   }
 
-  // Nothing chosen: the first card. A server that's gone: back to the workspace.
+  // Nothing chosen: the first card (on a phone, the list itself is the page). A server that's gone:
+  // back to the workspace.
   $effect(() => {
     if (!loaded) return;
     const first = regular[0] ?? jumpHosts[0];
-    if (serverId === null && first) navigate(`${base}/servers/${first.id}`, { replace: true });
+    if (serverId === null && first && !phone.current) navigate(`${base}/servers/${first.id}`, { replace: true });
     else if (serverId !== null && !selected) navigate(base, { replace: true });
   });
 
@@ -113,8 +119,11 @@
   </ul>
 {/snippet}
 
-<div class="flex min-h-0 flex-1 gap-5 p-5">
-  <aside class="-m-1 flex w-54 shrink-0 flex-col gap-3 overflow-y-auto p-1" aria-label="Servers">
+<!-- On a phone, the list and one server's details are two screens: the address says which. -->
+<div class="flex min-h-0 flex-1 gap-5 p-4 md:p-5">
+  <!-- -m-1/p-1 keep focus rings unclipped. On a phone the list fills the row with flex-1, not w-full: w-full
+       plus the negative margins would sit it 8px off-centre. -->
+  <aside class="-m-1 flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto p-1 md:w-54 md:flex-none {showDetails ? 'max-md:hidden' : ''}" aria-label="Servers">
     <div class="space-y-2">
       <h1 class="truncate text-lg font-semibold tracking-tight" title={workspace.name}>{workspace.name}</h1>
       {#if operator}
@@ -131,8 +140,11 @@
   </aside>
 
   <!-- The 8px gutter keeps focus rings at the edges from being clipped by the scrolling, without narrowing the content. -->
-  <section class="-mx-2 min-w-0 flex-1 overflow-y-auto px-2" aria-label="Server details">
-    {#if loaded && servers.length === 0}
+  <section
+    class="-mx-2 min-w-0 flex-1 overflow-y-auto px-2 {showDetails ? '' : 'max-md:hidden'}"
+    aria-label="Server details"
+  >
+    {#if empty}
       <div class="flex h-full flex-col items-center justify-center gap-3 rounded-xl border border-dashed p-8 text-center">
         <h2 class="text-lg font-semibold tracking-tight">No servers yet</h2>
         {#if operator}

@@ -97,12 +97,18 @@
       </span>
     {/if}
   </figcaption>
+  <!-- A tap shows the reading there too, and keeps it until the next tap; a sideways drag follows the
+       finger while an up-down one still scrolls the page. -->
   <div
-    class="relative mt-1 text-foreground"
+    class="relative mt-1 touch-pan-y text-foreground"
     role="img"
     aria-label="{title}, last {HISTORY_MINUTES} minutes"
+    onpointerdown={track}
     onpointermove={track}
-    onpointerleave={() => (hover = null)}
+    onpointerleave={(event) => {
+      if (event.pointerType === "mouse") hover = null;
+    }}
+    onpointercancel={() => (hover = null)}
   >
     <svg class="block h-[78px] w-full" viewBox="0 0 {WIDTH} {HEIGHT}" preserveAspectRatio="none" aria-hidden="true">
       {#each [0.25, 0.5, 0.75] as share (share)}

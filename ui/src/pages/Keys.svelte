@@ -59,7 +59,7 @@
   }
 </script>
 
-<div class="flex-1 overflow-y-auto p-6">
+<div class="flex-1 overflow-y-auto p-4 md:p-6">
   <div class="mx-auto max-w-5xl space-y-6">
     <header class="flex flex-wrap items-end justify-between gap-3">
       <div class="space-y-1.5">
@@ -74,7 +74,28 @@
     {#if loaded && keys.length === 0}
       <p class="rounded-xl border border-dashed p-8 text-center text-sm text-muted-foreground">No saved keys yet</p>
     {:else if keys.length > 0}
-      <div class="rounded-xl border bg-card">
+      <!-- Phones: one row per key, its details stacked; the table needs more width than a phone has. -->
+      <ul class="divide-y rounded-xl border bg-card md:hidden">
+        {#each keys as key (key.id)}
+          <li class="px-4 py-3 text-sm">
+            <p class="flex items-baseline justify-between gap-3">
+              <span class="min-w-0 truncate font-medium">{key.name}</span>
+              <span class="shrink-0 text-xs text-muted-foreground tabular-nums">
+                {key.server_count} {key.server_count === 1 ? "server" : "servers"}
+              </span>
+            </p>
+            <p class="mt-0.5 font-mono text-xs break-all text-muted-foreground">{key.key_type} · {key.fingerprint}</p>
+            <p class="text-xs text-muted-foreground">passphrase: {key.has_passphrase ? "yes" : "no"}</p>
+            {#if operator}
+              <div class="mt-2 flex gap-2">
+                <Button size="sm" variant="outline" onclick={() => replace(key)}>Replace</Button>
+                <Button size="sm" variant="outline" onclick={() => askToDelete(key)}>Delete</Button>
+              </div>
+            {/if}
+          </li>
+        {/each}
+      </ul>
+      <div class="hidden rounded-xl border bg-card md:block">
         <Table.Root>
           <Table.Header>
             <Table.Row>

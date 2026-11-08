@@ -4,12 +4,21 @@ import type {
   DockerStatus,
   GpuRead,
   InstanceState,
+  RemovedInstanceRead,
   ServerRead,
   WatchedInstanceRead,
   WatchSummaryRead,
 } from "$lib/api/client";
 import { clockTime, elapsed, relativeTime } from "$lib/format";
 import { serverStatus, type Tone } from "$lib/servers";
+
+/** One line of a server's instance list: a container that's there, or one removed in the last 7 days. */
+export type InstanceRow = { removed: false; instance: WatchedInstanceRead } | { removed: true; instance: RemovedInstanceRead };
+
+/** When a removed container went, as its row and card say it: "7 Nov". */
+export function dayMonth(iso: string): string {
+  return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+}
 
 /** The page asks for the cards and the open server this often (the backend reads usage every 5 s). */
 export const WATCH_POLL_MS = 5_000;

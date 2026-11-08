@@ -49,14 +49,16 @@
   {/each}
 {/snippet}
 
-<div class="flex-1 overflow-y-auto p-6">
+<div class="flex-1 overflow-y-auto p-4 md:p-6">
   <div class="mx-auto max-w-6xl space-y-6">
     <header class="space-y-1.5">
       <h1 class="text-xl font-semibold tracking-tight">Workspaces</h1>
       <p class="text-sm text-muted-foreground">{count === 1 ? "1 workspace" : `${count} workspaces`}</p>
     </header>
 
-    <ul class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+    <!-- grid-cols-1, not the implicit column: that one grows to a card's longest unbroken line (models, GPUs)
+         and pushes the cards past a phone's edge. -->
+    <ul class="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
       {#each workspaces.list as workspace (workspace.id)}
         {@const card = overviewCard(overviews.get(workspace.id), loaded)}
         <li>
@@ -90,7 +92,7 @@
               <p class="relative text-muted-foreground">No servers yet</p>
             {:else}
               {#if card.servers && card.instances}
-                <div class="relative grid w-fit grid-cols-[auto_repeat(4,auto)] items-center gap-x-4 gap-y-2">
+                <div class="relative grid w-fit grid-cols-[auto_repeat(4,auto)] items-center gap-x-3 gap-y-2 md:gap-x-4">
                   {@render counts("servers", card.servers)}
                   {@render counts("instances", card.instances)}
                 </div>
