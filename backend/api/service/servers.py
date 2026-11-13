@@ -4,11 +4,12 @@ from pydantic import SecretStr
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.models import SavedKey, Server
+from api.enums import ServerKind, UserRole, WorkspaceRole
+from api.models import SavedKey, Server, User, WorkspaceMember
 from api.schemas import ServerCreate, ServerUpdate
-from api.schemas.server import check_auth_fields
+from api.schemas.server import check_kind_fields
 
-_AUTH_FIELDS = ("auth_type", "password", "ssh_key_id")
+_KIND_FIELDS = ("host", "username", "auth_type", "password", "ssh_key_id", "jump_server_id", "jump_only")
 
 # Most jump hosts allowed in front of any one server.
 MAX_JUMP_HOSTS = 8
@@ -24,12 +25,48 @@ def server_from_create(data: ServerCreate, workspace_id: int) -> Server:
     return Server(**_reveal(data.model_dump()), workspace_id=workspace_id)
 
 
+async def owner_is_admin(session: AsyncSession, workspace_id: int) -> bool:
+    """True when the workspace's owner is an admin who is active and approved."""
+    owner = await session.scalar(
+        select(User)
+        .join(WorkspaceMember, WorkspaceMember.user_id == User.id)
+        .where(WorkspaceMember.workspace_id == workspace_id, WorkspaceMember.role == WorkspaceRole.OWNER)
+    )
+    return owner is not None and owner.role is UserRole.ADMIN and owner.is_active and not owner.is_pending
+
+
+async def has_this_machine(session: AsyncSession, workspace_id: int) -> bool:
+    return await session.scalar(
+        select(Server.id).where(Server.workspace_id == workspace_id, Server.kind == ServerKind.THIS_MACHINE).limit(1)
+    ) is not None
+
+
+async def can_see_this_machine(session: AsyncSession, server: Server, user: User) -> bool:
+    """Whether the user may see the server's instances, GPUs and snapshots. Always true for an SSH server.
+    This machine is for app admins, and for everyone else only while its workspace's owner is an admin."""
+    if server.kind is not ServerKind.THIS_MACHINE or user.role is UserRole.ADMIN:
+        return True
+    return await owner_is_admin(session, server.workspace_id)
+
+
 def apply_server_update(server: Server, update: ServerUpdate) -> None:
     """Apply a partial update. Raises ValueError, leaving the server unchanged, if the
-    merged credentials don't match auth_type."""
+    merged settings don't fit the server's kind."""
     fields = _reveal(update.model_dump(exclude_unset=True))
-    merged = {name: fields.get(name, getattr(server, name)) for name in _AUTH_FIELDS}
-    check_auth_fields(**merged)
+    kind = fields.get("kind", server.kind)
+    # Switching kind starts the connection settings from scratch.
+    if kind is not server.kind:
+        base = {name: False if name == "jump_only" else None for name in _KIND_FIELDS}
+    else:
+        base = {name: getattr(server, name) for name in _KIND_FIELDS}
+    merged = {name: fields.get(name, base[name]) for name in _KIND_FIELDS}
+    check_kind_fields(kind, **merged)
+    if kind is not server.kind:
+        for name, value in base.items():
+            setattr(server, name, value)
+        # This machine has no host key to trust.
+        server.host_key = None
+        server.host_key_recorded_at = None
     address = (server.host, server.port)
     for name, value in fields.items():
         setattr(server, name, value)
@@ -53,6 +90,8 @@ async def _jump_hosts_in_front(session: AsyncSession, server: Server) -> int:
         # Another workspace's server is as good as missing.
         if jump is None or jump.workspace_id != server.workspace_id:
             raise ValueError(f"Jump server {jump_id} does not exist")
+        if jump.kind is ServerKind.THIS_MACHINE:
+            raise ValueError("This machine can't be a jump host")
         jump_id = jump.jump_server_id
     return count
 
@@ -76,6 +115,9 @@ async def check_links(session: AsyncSession, server: Server) -> None:
     flush as a foreign-key error.
     """
     with session.no_autoflush:
+        # Servers that jump through this one would build a hop with no host.
+        if server.kind is ServerKind.THIS_MACHINE and server.id is not None and await count_servers_behind(session, server.id):
+            raise ValueError("This machine can't be a jump host")
         if server.ssh_key_id is not None:
             key = await session.get(SavedKey, server.ssh_key_id)
             # Another workspace's key is as good as missing.

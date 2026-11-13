@@ -137,10 +137,12 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def reload_watcher(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
-        # Any change inside a workspace (servers, keys, tests, host keys, the workspace itself)
-        # brings server watching in step at once, rather than at its next minute.
+        # Any change inside a workspace (servers, keys, tests, host keys, the workspace itself), or
+        # under Admin (an owner losing admin stops this machine being watched), brings server
+        # watching in step at once, rather than at its next minute.
         response = await call_next(request)
-        if (request.method not in ("GET", "HEAD", "OPTIONS") and request.url.path.startswith("/api/workspaces/")
+        if (request.method not in ("GET", "HEAD", "OPTIONS")
+                and request.url.path.startswith(("/api/workspaces/", "/api/admin/"))
                 and response.status_code < 400 and hasattr(request.app.state, "watcher")):
             request.app.state.watcher.reload()
         return response

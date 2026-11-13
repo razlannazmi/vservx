@@ -28,6 +28,16 @@ class CommandRunner(Protocol):
     async def run(self, command: str, stdin: str | None = None) -> CommandResult: ...
 
 
+class ServerShell(Protocol):
+    """What watching a server needs: run a command there, and GET from a port on it."""
+
+    async def run(self, command: str, stdin: str | None = None) -> CommandResult: ...
+
+    async def http_get(
+        self, host: str, port: int, path: str, headers: Mapping[str, str] | None = None
+    ) -> HttpResponse: ...
+
+
 class PortClosed(Exception):
     """Nothing is accepting connections on the instance's port."""
 
@@ -126,6 +136,38 @@ def _response(raw: bytes) -> HttpResponse:
     return HttpResponse(status, body.decode("utf-8", "replace"))
 
 
+async def exchange(
+    reader: asyncio.StreamReader, writer: asyncio.StreamWriter, host: str, port: int, path: str,
+    headers: Mapping[str, str], received: bytearray,
+) -> HttpResponse:
+    """Send a GET over an open connection and read the answer into `received` (so a caller that
+    times out can say what arrived). Closes the writer."""
+    try:
+        # The answer ends after Content-Length bytes, after its last chunk, or when the connection
+        # closes. Some servers (or what's between them and sshd) keep it open after a complete
+        # answer, so don't wait for the close once the answer says it's all in.
+        lines = [f"GET {path} HTTP/1.0", f"Host: {host}:{port}", *(f"{k}: {v}" for k, v in headers.items()), "", ""]
+        writer.write("\r\n".join(lines).encode())
+        progress = _AnswerProgress()
+        while len(received) < MAX_BODY:
+            chunk = await reader.read(65536)
+            if not chunk:
+                break
+            received += chunk
+            if progress.complete(received):
+                break
+    finally:
+        writer.close()
+    return _response(bytes(received))
+
+
+def timeout_message(host: str, port: int, path: str, received: bytearray) -> str:
+    """Whether an answer arrived tells "never answered" from "answered, but never ended"."""
+    first = bytes(received).split(b"\r\n", 1)[0].decode("latin-1")
+    arrived = f"{len(received)} bytes arrived, starting {first!r}" if received else "nothing arrived"
+    return f"GET {path} on {host}:{port} didn't end within {HTTP_TIMEOUT:g} s; {arrived}"
+
+
 class Shell:
     def __init__(self, connection: asyncssh.SSHClientConnection, timeout: float) -> None:
         self._connection = connection
@@ -153,33 +195,14 @@ class Shell:
                     raise PortClosed(exc.reason) from None
                 self._forwarding = False
             except TimeoutError:
-                # Whether an answer arrived tells "never answered" from "answered, but never ended".
-                first = bytes(received).split(b"\r\n", 1)[0].decode("latin-1")
-                arrived = f"{len(received)} bytes arrived, starting {first!r}" if received else "nothing arrived"
-                raise TimeoutError(f"GET {path} on {host}:{port} didn't end within {HTTP_TIMEOUT:g} s; {arrived}") from None
+                raise TimeoutError(timeout_message(host, port, path, received)) from None
         return await self._curl_get(host, port, path, headers)
 
     async def _forwarded_get(
         self, host: str, port: int, path: str, headers: dict[str, str], received: bytearray
     ) -> HttpResponse:
         reader, writer = await self._connection.open_connection(host, port)
-        try:
-            # The answer ends after Content-Length bytes, after its last chunk, or when the connection
-            # closes. Some servers (or what's between them and sshd) keep it open after a complete
-            # answer, so don't wait for the close once the answer says it's all in.
-            lines = [f"GET {path} HTTP/1.0", f"Host: {host}:{port}", *(f"{k}: {v}" for k, v in headers.items()), "", ""]
-            writer.write("\r\n".join(lines).encode())
-            progress = _AnswerProgress()
-            while len(received) < MAX_BODY:
-                chunk = await reader.read(65536)
-                if not chunk:
-                    break
-                received += chunk
-                if progress.complete(received):
-                    break
-        finally:
-            writer.close()
-        return _response(bytes(received))
+        return await exchange(reader, writer, host, port, path, headers, received)
 
     async def _curl_get(self, host: str, port: int, path: str, headers: dict[str, str]) -> HttpResponse:
         command = ["curl", "-sS", "--max-time", f"{HTTP_TIMEOUT:g}", "-o", "-", "-w", "\\n%{http_code}"]

@@ -1,18 +1,22 @@
 """Turning stored servers into SSH hops, testing them, and recording their host keys."""
 
 import asyncio
+import time
 from contextlib import AsyncExitStack
 
 import asyncssh
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.config import get_settings
 from api.db.base import utcnow
-from api.enums import AuthType
+from api.enums import AuthType, ConnectionFailure
 from api.models import SavedKey, Server
 from api.schemas.connection import ConnectionTestResult, HopResult
 from api.service.servers import MAX_JUMP_HOSTS
 from api.ssh.connect import Hop, connect_chain, fetch_host_key, run_connection_test
 from api.ssh.keys import InvalidKey, fingerprint_of, load_private_key
+from api.watch import local
+from api.watch.docker import probe_docker
 
 
 class HostKeyMismatch(Exception):
@@ -92,6 +96,51 @@ async def check_server_connection(session: AsyncSession, server: Server, timeout
         _remember_test(server, result)
     await session.commit()
     return result
+
+
+def _this_machine_result(server: Server, started: float, hostname: str | None, ok: bool,
+                         reason: ConnectionFailure | None, message: str | None) -> ConnectionTestResult:
+    hop = HopResult(server_id=server.id, name=server.name, ok=ok, fingerprint=None, reason=reason, message=message)
+    return ConnectionTestResult(ok=ok, hostname=hostname, elapsed_ms=int((time.monotonic() - started) * 1000), hops=[hop])
+
+
+async def check_this_machine(session: AsyncSession, server: Server) -> ConnectionTestResult:
+    """Test this machine: that a command runs here, then whether Docker and systemd can be reached.
+    Only a command that can't run fails the test; a Docker or systemd problem is in the message.
+    A saved server remembers the result."""
+    started = time.monotonic()
+    timeout = get_settings().ssh_connect_timeout
+    result = await _test_this_machine(server, started, timeout)
+    if server.id is not None:
+        _remember_test(server, result)
+    await session.commit()
+    return result
+
+
+async def _test_this_machine(server: Server, started: float, timeout: float) -> ConnectionTestResult:
+    if reason := local.unavailable_reason():
+        return _this_machine_result(server, started, None, False, ConnectionFailure.ERROR, reason)
+    hints = local.container_hints()
+    shell = local.LocalShell(timeout)
+    try:
+        systemd = await shell.run("systemctl show --property=Version --value")
+        docker, ps = await probe_docker(shell, server.sudo_password)
+    except TimeoutError:
+        return _this_machine_result(server, started, None, False, ConnectionFailure.TIMEOUT,
+                                    f"No answer within {timeout:g} seconds")
+    except OSError as exc:
+        return _this_machine_result(server, started, None, False, ConnectionFailure.ERROR, str(exc))
+    if ps is not None:
+        parts = ["Docker: reachable"]
+    else:
+        parts = [f"Docker: {hints.get('docker') or docker.message or 'not reachable'}"]
+    if systemd.exit_status == 0:
+        parts.append("systemd: reachable")
+    else:
+        first = next((line.strip() for line in systemd.stderr.splitlines() if line.strip()), "systemctl failed")
+        parts.append(f"systemd: {hints.get('systemd') or first}")
+    parts += [hints[name] for name in ("pid", "gpus") if name in hints]
+    return _this_machine_result(server, started, local.machine_hostname(), True, None, "; ".join(parts))
 
 
 async def accept_host_key(session: AsyncSession, server: Server, fingerprint: str, timeout: float) -> None:

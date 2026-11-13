@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from api.auth import CurrentUserDep, WorkspaceAccessDep, workspace_access
 from api.auth.limits import KeyCheckLimitsDep
 from api.db.deps import SessionDep
+from api.models import Server, User
 from api.routers.servers import get_server_or_404
 from api.schemas.snapshot import (
     CheckKeyRead,
@@ -17,6 +18,7 @@ from api.schemas.snapshot import (
     SnapshotPageRead,
 )
 from api.service import snapshots as service
+from api.service.servers import can_see_this_machine
 
 router = APIRouter(prefix="/workspaces/{workspace_id}/servers/{server_id}", tags=["snapshots"],
                    dependencies=[Depends(workspace_access)])
@@ -28,6 +30,14 @@ def _not_found() -> HTTPException:
     return HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Snapshot not found")
 
 
+async def _visible_server(session: SessionDep, access: WorkspaceAccessDep, user: User, server_id: int) -> Server:
+    """The server, or 404 when it's this machine and the user may not see it."""
+    server = await get_server_or_404(session, access, server_id)
+    if not await can_see_this_machine(session, server, user):
+        raise _not_found()
+    return server
+
+
 async def _page(session: SessionDep, server_id: int, name: str | None, limit: int, before: str | None) -> SnapshotPageRead:
     try:
         return await service.list_snapshots(session, server_id, name, limit, before)
@@ -36,27 +46,27 @@ async def _page(session: SessionDep, server_id: int, name: str | None, limit: in
 
 
 @router.get("/snapshots", response_model=SnapshotPageRead)
-async def list_server_snapshots(server_id: int, access: WorkspaceAccessDep, session: SessionDep,
-                                limit: Limit = service.PAGE_SIZE, before: str | None = None) -> SnapshotPageRead:
+async def list_server_snapshots(server_id: int, user: CurrentUserDep, access: WorkspaceAccessDep,
+                                session: SessionDep, limit: Limit = service.PAGE_SIZE, before: str | None = None) -> SnapshotPageRead:
     """Every instance's changes and removals on the server, newest first."""
-    await get_server_or_404(session, access, server_id)
+    await _visible_server(session, access, user, server_id)
     return await _page(session, server_id, None, limit, before)
 
 
 @router.get("/instances/{name}/snapshots", response_model=SnapshotPageRead)
-async def list_instance_snapshots(server_id: int, name: str, access: WorkspaceAccessDep, session: SessionDep,
-                                  limit: Limit = service.PAGE_SIZE, before: str | None = None) -> SnapshotPageRead:
-    await get_server_or_404(session, access, server_id)
+async def list_instance_snapshots(server_id: int, name: str, user: CurrentUserDep, access: WorkspaceAccessDep,
+                                  session: SessionDep, limit: Limit = service.PAGE_SIZE, before: str | None = None) -> SnapshotPageRead:
+    await _visible_server(session, access, user, server_id)
     return await _page(session, server_id, name, limit, before)
 
 
 # Declared before /snapshots/{snapshot_id}, which would otherwise take "compare" as an ID.
 @router.get("/snapshots/compare", response_model=SnapshotCompareRead)
-async def compare_snapshots(server_id: int, access: WorkspaceAccessDep, session: SessionDep,
-                            first: Annotated[int, Query(alias="from")],
+async def compare_snapshots(server_id: int, user: CurrentUserDep, access: WorkspaceAccessDep,
+                            session: SessionDep, first: Annotated[int, Query(alias="from")],
                             second: Annotated[int, Query(alias="to")]) -> SnapshotCompareRead:
     """Any two snapshots of this server; the older is always "from"."""
-    await get_server_or_404(session, access, server_id)
+    await _visible_server(session, access, user, server_id)
     try:
         return await service.compare_snapshots(session, server_id, first, second)
     except service.NotFound:
@@ -64,9 +74,9 @@ async def compare_snapshots(server_id: int, access: WorkspaceAccessDep, session:
 
 
 @router.get("/snapshots/{snapshot_id}", response_model=SnapshotDetailRead)
-async def get_snapshot(server_id: int, snapshot_id: int, access: WorkspaceAccessDep,
+async def get_snapshot(server_id: int, snapshot_id: int, user: CurrentUserDep, access: WorkspaceAccessDep,
                        session: SessionDep) -> SnapshotDetailRead:
-    await get_server_or_404(session, access, server_id)
+    await _visible_server(session, access, user, server_id)
     try:
         return await service.get_snapshot(session, server_id, snapshot_id)
     except service.NotFound:
@@ -77,7 +87,7 @@ async def get_snapshot(server_id: int, snapshot_id: int, access: WorkspaceAccess
 async def check_key(server_id: int, snapshot_id: int, body: CheckKeyRequest, user: CurrentUserDep,
                     access: WorkspaceAccessDep, session: SessionDep, limits: KeyCheckLimitsDep) -> CheckKeyRead:
     """Whether a key matches the snapshot's API key fingerprint. The key is never stored or logged."""
-    await get_server_or_404(session, access, server_id)
+    await _visible_server(session, access, user, server_id)
     limits.attempt(user.id)
     try:
         return await service.check_snapshot_key(session, server_id, snapshot_id, body.key)

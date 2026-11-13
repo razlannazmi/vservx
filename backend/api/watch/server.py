@@ -6,14 +6,14 @@ import logging
 import random
 from collections import Counter
 from contextlib import AsyncExitStack
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 
 import asyncssh
 
 from api.config import Settings
 from api.db.base import utcnow
-from api.enums import ConnectionFailure, DockerStatus, InstanceState, WatchState
+from api.enums import ConnectionFailure, DockerStatus, InstanceState, ServerKind, WatchState
 from api.schemas.watch import (
     GpuRead,
     RemovedInstanceRead,
@@ -26,6 +26,7 @@ from api.snapshots.config import LaunchConfig, launch_config
 from api.snapshots.fingerprint import fingerprint
 from api.snapshots.recorder import REMOVED_ROW_DAYS, Seen, SnapshotRecorder
 from api.ssh.connect import Hop, connect_chain
+from api.watch import local
 from api.watch.docker import (
     PS_ARGS,
     DockerAccess,
@@ -42,7 +43,7 @@ from api.watch.docker import (
 )
 from api.watch.frameworks import Container, Framework, HttpResponse, InstanceInfo, InstanceSpec, framework_for
 from api.watch.gpus import GPU_COMMAND, Gpu, gpu_users, parse_gpus
-from api.watch.shell import CantReachPort, CommandResult, PortClosed, Shell
+from api.watch.shell import CantReachPort, CommandResult, PortClosed, ServerShell, Shell
 from api.watch.states import Probe, instance_state
 from api.watch.usage import UsageHistory, UsagePoint
 
@@ -57,6 +58,7 @@ REFRESH_GAP = timedelta(seconds=5)
 # and sshd allows 10 per connection by default (MaxSessions).
 PROBES_AT_ONCE = 4
 NO_GPUS = "nvidia-smi isn't available on this server."
+USE_HOST_NETWORKING = "vservx runs in a container: use host networking (network_mode: host) to reach this port."
 # Discoveries an image's own settings are asked for before snapshots go ahead without them.
 IMAGE_TRIES = 3
 
@@ -75,6 +77,8 @@ class WatchConfig:
     # Outermost jump host first. Every hop has a recorded host key.
     hops: list[Hop]
     sudo_password: str | None = field(repr=False)
+    # This machine is watched through a LocalShell: no hops, no SSH.
+    kind: ServerKind = ServerKind.SSH
 
 
 @dataclass
@@ -120,6 +124,10 @@ class ServerWatch:
         self._histories = histories
         self._history_length = max(1, round(settings.history_minutes * 60 / settings.usage_interval_seconds))
         self._round_limit = 2 * settings.ssh_connect_timeout
+        # In a container, what this machine can't see of its host, by part (see local.container_hints).
+        this_machine = config.kind is ServerKind.THIS_MACHINE
+        self._hints = local.container_hints() if this_machine else {}
+        self._in_container = this_machine and local.in_container()
         # Set when run() has ended for good.
         self.stopped_at: datetime | None = None
         self._state = WatchState.CHECKING
@@ -176,7 +184,10 @@ class ServerWatch:
         self._state = state
         self._message = message
 
-    async def _connect(self, stack: AsyncExitStack) -> Shell | None:
+    async def _connect(self, stack: AsyncExitStack) -> ServerShell | None:
+        if self.config.kind is ServerKind.THIS_MACHINE:
+            self._set_state(WatchState.CONNECTED, None)
+            return local.LocalShell(self._settings.ssh_connect_timeout)
         async with self._limiter:
             result = await connect_chain(self.config.hops, self._settings.ssh_connect_timeout, stack)
         if result.connection is not None:
@@ -189,7 +200,7 @@ class ServerWatch:
             self.stopped_at = utcnow()
         return None
 
-    async def _watch(self, shell: Shell) -> None:
+    async def _watch(self, shell: ServerShell) -> None:
         """Rounds until the connection fails."""
         loop = asyncio.get_running_loop()
         while True:
@@ -213,7 +224,7 @@ class ServerWatch:
                 pass
             self._wake.clear()
 
-    async def _round(self, shell: Shell) -> None:
+    async def _round(self, shell: ServerShell) -> None:
         overdue = (self._last_discovery is None or utcnow() - self._last_discovery
                    >= timedelta(seconds=self._settings.discovery_interval_seconds))
         if self._discovery_due or overdue:
@@ -225,7 +236,7 @@ class ServerWatch:
 
     # Looking for instances
 
-    async def _discover(self, shell: Shell) -> None:
+    async def _discover(self, shell: ServerShell) -> None:
         self._discovery_due = False
         self._last_discovery = utcnow()
         sudo_password = self.config.sudo_password
@@ -237,6 +248,8 @@ class ServerWatch:
         if ps is None or ps.exit_status != 0:
             # Not known yet, or the way that worked has stopped working (group or sudoers changed).
             self._docker, ps = await probe_docker(shell, sudo_password)
+            if ps is None and "docker" in self._hints:
+                self._docker = replace(self._docker, message=self._hints["docker"])
         if ps is None:
             return
         frameworks = {entry.name: framework for entry in parse_ps(ps.stdout)
@@ -269,7 +282,7 @@ class ServerWatch:
         self._found_at = utcnow()
         await self._record(shell, [container for container in containers if container.name in found])
 
-    async def _inspect(self, shell: Shell, names: list[str]) -> CommandResult:
+    async def _inspect(self, shell: ServerShell, names: list[str]) -> CommandResult:
         """docker inspect, falling back for good to env names only when Docker can't run the filter."""
         sudo_password = self.config.sudo_password
         result = await run_docker(shell, self._docker, inspect_args(names, not self._env_names_only), sudo_password)
@@ -282,7 +295,7 @@ class ServerWatch:
 
     # Recording snapshots
 
-    async def _image_settings(self, shell: Shell, containers: list[Container]) -> bool:
+    async def _image_settings(self, shell: ServerShell, containers: list[Container]) -> bool:
         """Read the images' own settings once each. False while one couldn't be read yet: a config
         built without them would hold the image's inherited env and entrypoint, then change once
         they read fine. An image still unreadable after IMAGE_TRIES discoveries is given up on."""
@@ -310,7 +323,7 @@ class ServerWatch:
                 known = False
         return known
 
-    async def _record(self, shell: Shell, containers: list[Container]) -> None:
+    async def _record(self, shell: ServerShell, containers: list[Container]) -> None:
         """Hand what was found to the recorder, unless nothing changed since the last write. A
         failed write is tried again at the next discovery; watching carries on regardless."""
         if self._recorder is None:
@@ -353,7 +366,7 @@ class ServerWatch:
 
     # Reading usage
 
-    async def _probe_all(self, shell: Shell, instances: list[_Instance]) -> None:
+    async def _probe_all(self, shell: ServerShell, instances: list[_Instance]) -> None:
         """Read the instances side by side, so a few slow ones can't push the round past its time
         limit and get the whole server called unreachable."""
         at_once = asyncio.Semaphore(PROBES_AT_ONCE)
@@ -371,7 +384,7 @@ class ServerWatch:
             # on that error, as it did when they were read one at a time.
             raise failed.exceptions[0] from None
 
-    async def _probe(self, shell: Shell, instance: _Instance) -> None:
+    async def _probe(self, shell: ServerShell, instance: _Instance) -> None:
         host, port = target(instance.container, instance.spec.port)
 
         async def get(path: str, headers: dict[str, str]) -> HttpResponse:
@@ -408,6 +421,8 @@ class ServerWatch:
                 # A hiccup between the health check and the metrics; the next round reads them.
                 problem = f"couldn't read usage: {exc or type(exc).__name__}"
         instance.state = instance_state(instance.container, probe, instance.ever_ready)
+        if probe is Probe.PORT_CLOSED and self._in_container:
+            message = USE_HOST_NETWORKING
         instance.message = message
         self._log_problem(instance, problem)
         if was_ready and instance.state is not InstanceState.READY:
@@ -426,7 +441,7 @@ class ServerWatch:
             logger.warning("Server %s, instance %s: reading it again", self.config.server_id, name)
         instance.problem = problem
 
-    async def _read_gpus(self, shell: Shell, retry: bool) -> None:
+    async def _read_gpus(self, shell: ServerShell, retry: bool) -> None:
         # A server without nvidia-smi is asked again only when instances are looked for.
         if self._gpus is None and self._gpu_message is not None and not retry:
             return
@@ -440,6 +455,8 @@ class ServerWatch:
         else:
             reason = next((line.strip() for line in (result.stderr + result.stdout).splitlines() if line.strip()), "")
             self._gpu_message = f"nvidia-smi failed: {reason}" if reason else NO_GPUS
+        if "gpus" in self._hints:
+            self._gpu_message = self._hints["gpus"]
 
     # Reading back
 
