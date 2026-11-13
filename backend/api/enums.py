@@ -6,6 +6,21 @@ class AuthType(StrEnum):
     KEY = "key"
 
 
+class ServerKind(StrEnum):
+    """How vservx reaches a server."""
+
+    SSH = "ssh"
+    THIS_MACHINE = "this_machine"
+
+
+class InstanceSource(StrEnum):
+    """What runs an instance."""
+
+    DOCKER = "docker"
+    SYSTEMD = "systemd"
+    SYSTEMD_USER = "systemd-user"
+
+
 class ConnectionFailure(StrEnum):
     """Why an SSH hop failed."""
 
@@ -65,6 +80,7 @@ class WatchState(StrEnum):
     UNREACHABLE = "unreachable"
     SIGN_IN_FAILED = "sign_in_failed"
     HOST_KEY_CHANGED = "host_key_changed"
+    NEEDS_ADMIN_OWNER = "needs_admin_owner"
 
 
 class DockerStatus(StrEnum):
@@ -76,6 +92,17 @@ class DockerStatus(StrEnum):
     NEEDS_SUDO_PASSWORD = "needs_sudo_password"
     SUDO_PASSWORD_REJECTED = "sudo_password_rejected"
     SUDO_NEEDS_TTY = "sudo_needs_tty"
+    UNAVAILABLE = "unavailable"
+
+
+class SystemdStatus(StrEnum):
+    """Whether vservx can read systemd services on a server."""
+
+    UNKNOWN = "unknown"
+    AVAILABLE = "available"
+    # No systemd on the machine; not an error.
+    MISSING = "missing"
+    # Systemd is there but could not be read; a message says why.
     UNAVAILABLE = "unavailable"
 
 

@@ -6,7 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from api.db.base import Base, str_enum, utcnow
 from api.db.crypto import EncryptedString
-from api.enums import AuthType, ConnectionFailure
+from api.enums import AuthType, ConnectionFailure, ServerKind
 from api.ssh.keys import fingerprint_of
 
 if TYPE_CHECKING:
@@ -21,10 +21,14 @@ class Server(Base):
     # Deleting a workspace deletes its servers first (api.service.workspaces.delete_workspace).
     workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id", ondelete="RESTRICT"), index=True)
     name: Mapped[str] = mapped_column(String(255))
-    host: Mapped[str] = mapped_column(String(255))
+    kind: Mapped[ServerKind] = mapped_column(
+        str_enum(ServerKind), default=ServerKind.SSH, server_default=ServerKind.SSH.value
+    )
+    # host, username and auth_type are empty for the this-machine kind.
+    host: Mapped[str | None] = mapped_column(String(255))
     port: Mapped[int] = mapped_column(default=22)
-    username: Mapped[str] = mapped_column(String(255))
-    auth_type: Mapped[AuthType] = mapped_column(str_enum(AuthType))
+    username: Mapped[str | None] = mapped_column(String(255))
+    auth_type: Mapped[AuthType | None] = mapped_column(str_enum(AuthType))
     password: Mapped[str | None] = mapped_column(EncryptedString)
     # Used only to run `docker ps` / `docker inspect` through sudo. Without it, a password
     # server's sign-in password is used.
