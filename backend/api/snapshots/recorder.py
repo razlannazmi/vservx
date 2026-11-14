@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.enums import InstanceSource, SnapshotKind
 from api.models import Instance, Snapshot
 from api.schemas.watch import RemovedInstanceRead
-from api.snapshots.config import LaunchConfig, config_from_json, config_to_json
+from api.snapshots.config import Config, UnitConfig, config_from_json, config_to_json
 from api.snapshots.diff import Point, same_launch
 from api.watch.frameworks import instance_key
 
@@ -31,7 +31,7 @@ class Seen:
     restart_count: int
     image_id: str
     model: str | None
-    config: LaunchConfig
+    config: Config
     key_fingerprint: str | None
     key_id: str | None
     source: InstanceSource = InstanceSource.DOCKER
@@ -47,7 +47,8 @@ class Recorded:
 
 def point(snapshot: Snapshot) -> Point:
     config = config_from_json(snapshot.config) if snapshot.config is not None else None
-    return Point(snapshot.container_id, snapshot.image_id, config, snapshot.key_fingerprint, snapshot.key_id)
+    return Point(snapshot.container_id, snapshot.image_id, config, snapshot.key_fingerprint, snapshot.key_id,
+                 snapshot.vllm_version)
 
 
 async def _newest(session: AsyncSession, server_id: int, live_only: bool) -> dict[int, Snapshot]:
@@ -103,6 +104,10 @@ class SnapshotRecorder:
             kind, happened = SnapshotKind.FIRST_SEEN, found.created_at or now
         else:
             old = point(last)
+            if isinstance(found.config, UnitConfig) and not isinstance(old.config, UnitConfig):
+                # Written before units had their own config: fill it in; that's no change.
+                last.config = config_to_json(found.config)
+                return
             same = same_launch(old, new)
             if last.container_id == found.container_id:
                 if same:
@@ -147,14 +152,32 @@ class SnapshotRecorder:
                 Instance.removed_at.is_(None)))
             return {instance_key(instance.source, instance.name) for instance in rows}
 
-    async def fill_version(self, server_id: int, source: InstanceSource, name: str, container_id: str,
-                           version: str) -> None:
-        """The vLLM version, read once the instance is ready, into the snapshots of that container."""
+    async def record_version(self, server_id: int, source: InstanceSource, name: str, container_id: str,
+                             version: str, now: datetime) -> None:
+        """The vLLM version, read once the instance is ready. Docker: into the snapshots of that
+        container. A unit: into its latest snapshot when that has none; when it differs, a "changed"
+        snapshot with the same unit text, since an upgrade is a restart of an unchanged unit."""
         async with self._sessionmaker() as session:
             instance_id = select(Instance.id).where(Instance.server_id == server_id, Instance.source == source,
                                                     Instance.name == name)
-            await session.execute(update(Snapshot).where(
-                Snapshot.instance_id.in_(instance_id), Snapshot.container_id == container_id,
-                Snapshot.kind != SnapshotKind.REMOVED, Snapshot.vllm_version.is_(None),
-            ).values(vllm_version=version))
+            if source is InstanceSource.DOCKER:
+                await session.execute(update(Snapshot).where(
+                    Snapshot.instance_id.in_(instance_id), Snapshot.container_id == container_id,
+                    Snapshot.kind != SnapshotKind.REMOVED, Snapshot.vllm_version.is_(None),
+                ).values(vllm_version=version))
+            else:
+                last = await session.scalar(select(Snapshot).where(
+                    Snapshot.instance_id.in_(instance_id), Snapshot.kind != SnapshotKind.REMOVED,
+                ).order_by(Snapshot.id.desc()).limit(1))
+                if last is None or last.vllm_version == version:
+                    return
+                if last.vllm_version is None:
+                    last.vllm_version = version
+                else:
+                    session.add(Snapshot(
+                        server_id=server_id, instance_id=last.instance_id, kind=SnapshotKind.CHANGED,
+                        happened_at=now, noticed_at=now, container_id=last.container_id, created_at=last.created_at,
+                        started_at=last.started_at, restart_count=last.restart_count, image_id=last.image_id,
+                        vllm_version=version, model=last.model, config=last.config,
+                        key_fingerprint=last.key_fingerprint, key_id=last.key_id))
             await session.commit()

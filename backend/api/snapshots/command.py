@@ -5,7 +5,8 @@ shell instead of running with a wrong value."""
 import re
 import shlex
 
-from api.snapshots.config import LaunchConfig
+from api.enums import InstanceSource
+from api.snapshots.config import LaunchConfig, UnitConfig
 from api.snapshots.secrets import SECRET_FLAGS, placeholder
 
 COVERS = (
@@ -13,6 +14,7 @@ COVERS = (
     "restart policy, ulimits, devices, privileged, capabilities, user and working directory. "
     "Anything else isn't included."
 )
+UNIT_COVERS = "The unit file and its drop-ins, as on disk. Files named in EnvironmentFile= aren't included."
 ENV_HIDDEN_LINE = "This server's Docker is too old for vservx to separate secrets, so no env values are shown."
 
 # Only the placeholders masking writes into arguments; any other <WORD> is quoted like normal text.
@@ -83,6 +85,16 @@ def docker_run(name: str, config: LaunchConfig) -> str:
     items.append(shlex.quote(config.image))
     items.extend(pair_words([*rest, *config.args]))
     return " \\\n".join([f"docker run -d --name {shlex.quote(name)}", *(f"  {item}" for item in items)])
+
+
+def unit_command(name: str, config: UnitConfig) -> str:
+    """The masked unit text, then the commands that install it and start it."""
+    unit = shlex.quote(name)
+    if config.scope is InstanceSource.SYSTEMD_USER:
+        start = f"systemctl --user daemon-reload && systemctl --user enable --now {unit}"
+    else:
+        start = f"sudo systemctl daemon-reload && sudo systemctl enable --now {unit}"
+    return f"{config.text.rstrip()}\n\n{start}"
 
 
 def compose_line(config: LaunchConfig) -> str | None:

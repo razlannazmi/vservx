@@ -125,3 +125,55 @@ def test_systemd_only_server_is_not_a_docker_problem(watching, client, api, w, s
     assert (view["docker"], view["docker_message"]) == ("unavailable", DOCKER_MISSING)
     [overview] = [o for o in api.get("/api/workspaces/overview").json() if o["workspace_id"] == workspace]
     assert (overview["servers"]["docker_problem"], overview["servers"]["up"]) == (0, 1)
+
+
+UNIT_TEXT = """# /etc/systemd/system/vllm-llama.service
+[Service]
+Environment=HF_TOKEN=hf_secret CUDA_VISIBLE_DEVICES=0
+ExecStart=/opt/venv/bin/vllm serve meta-llama/Llama-3.1-8B-Instruct --port 8000 --api-key vllm-key
+"""
+UNIT = "vllm-llama.service"
+
+
+def _entries(api, w, server_id):
+    return api.get(f"{w}/servers/{server_id}/snapshots").json()["entries"]
+
+
+def test_unit_snapshot_masks_secrets(watching, client, api, w, sshd, fake_vllm):
+    host = SystemdHost(fake_vllm)
+    host.cat[UNIT] = UNIT_TEXT
+    server_id, _ = _watch(api, w, sshd, host)
+    [entry] = wait_for(lambda: _entries(api, w, server_id), bool)
+    detail = api.get(f"{w}/servers/{server_id}/snapshots/{entry['id']}").json()
+    assert detail["kind"] == "first_seen" and detail["source"] == "systemd" and "hf_secret" not in detail["command"]
+    assert "vllm-key" not in detail["command"]
+    assert "Environment=HF_TOKEN=<HF_TOKEN>" in detail["command"]
+    assert "--api-key <VLLM_API_KEY>" in detail["command"]
+    assert detail["command"].endswith("sudo systemctl daemon-reload && sudo systemctl enable --now vllm-llama.service")
+    assert (detail["image"], detail["image_id"], detail["compose"], detail["env_values_hidden"]) == (None,) * 3 + (False,)
+
+
+def test_unit_change_writes_changed_snapshot(watching, client, api, w, sshd, fake_vllm):
+    host = SystemdHost(fake_vllm)
+    host.cat[UNIT] = UNIT_TEXT
+    server_id, _ = _watch(api, w, sshd, host)
+    wait_for(lambda: _entries(api, w, server_id), bool)
+    host.cat[UNIT] = UNIT_TEXT.rstrip() + " --max-model-len 8192\n"
+    entries = wait_for(lambda: _entries(api, w, server_id), lambda e: len(e) == 2)
+    assert entries[0]["kind"] == "changed"
+    assert [d["label"] for d in entries[0]["differences"]] == ["unit file", "unit file"]
+
+
+def test_new_vllm_version_writes_changed_snapshot(watching, client, api, w, sshd, fake_vllm):
+    host = SystemdHost(fake_vllm)
+    host.cat[UNIT] = UNIT_TEXT
+    server_id, get_view = _watch(api, w, sshd, host)
+    wait_for(get_view, _ready)
+    entries = wait_for(lambda: _entries(api, w, server_id), bool)
+    first = wait_for(lambda: api.get(f"{w}/servers/{server_id}/snapshots/{entries[0]['id']}").json(),
+                     lambda d: d["vllm_version"] == "0.11.0")
+    fake_vllm.version = "0.12.0"
+    host.show = host.show.replace("08:00:00", "09:00:00")  # restarted
+    entries = wait_for(lambda: _entries(api, w, server_id), lambda e: len(e) == 2)
+    assert entries[0]["kind"] == "changed" and first["id"] == entries[1]["id"]
+    assert entries[0]["differences"] == [{"label": "vLLM", "before": "0.11.0", "after": "0.12.0", "note": None}]

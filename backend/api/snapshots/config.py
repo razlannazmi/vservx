@@ -8,6 +8,7 @@ listing the same things in another order is never a change.
 from dataclasses import asdict, dataclass, fields
 from typing import Any
 
+from api.enums import InstanceSource
 from api.snapshots.secrets import mask_args
 from api.watch.docker import ImageDefaults
 from api.watch.frameworks import Container
@@ -48,6 +49,19 @@ class LaunchConfig:
     # The compose project, and its config files or else its working dir.
     compose: tuple[str, str] | None = None
     env_values_hidden: bool = False
+
+
+@dataclass(frozen=True)
+class UnitConfig:
+    """A systemd unit as `systemctl cat` prints it, already masked. `scope` is the unit's source:
+    systemd or systemd-user."""
+
+    text: str
+    scope: InstanceSource
+
+
+Config = LaunchConfig | UnitConfig
+_UNIT_SCOPES = (InstanceSource.SYSTEMD, InstanceSource.SYSTEMD_USER)
 
 
 def _ports(bindings: dict[str, Any] | None) -> tuple[str, ...]:
@@ -142,13 +156,18 @@ def launch_config(container: Container, image: ImageDefaults | None) -> LaunchCo
     )
 
 
-def config_to_json(config: LaunchConfig) -> dict[str, Any]:
+def config_to_json(config: Config) -> dict[str, Any]:
+    if isinstance(config, UnitConfig):
+        return {"source": config.scope.value, "text": config.text}
     return asdict(config)
 
 
-def config_from_json(data: dict[str, Any]) -> LaunchConfig:
-    """The stored form back into a config. Unknown keys are ignored and missing ones take defaults,
-    so configs stored by an older vservx still read."""
+def config_from_json(data: dict[str, Any]) -> Config:
+    """The stored form back into a config. A systemd source gives a unit's config; anything else, a
+    Docker one, so configs stored before there was a source still read. Unknown keys are ignored and
+    missing ones take defaults, so configs stored by an older vservx still read."""
+    if data.get("source") in _UNIT_SCOPES:
+        return UnitConfig(text=data.get("text") or "", scope=InstanceSource(data["source"]))
     known = {f.name for f in fields(LaunchConfig)}
     return LaunchConfig(**{key: tuple(value) if isinstance(value, list) else value
                            for key, value in data.items() if key in known})

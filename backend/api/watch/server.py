@@ -31,7 +31,7 @@ from api.schemas.watch import (
     WatchedInstanceRead,
     WatchSummaryRead,
 )
-from api.snapshots.config import LaunchConfig, launch_config
+from api.snapshots.config import Config, UnitConfig, launch_config
 from api.snapshots.fingerprint import fingerprint
 from api.snapshots.recorder import REMOVED_ROW_DAYS, Seen, SnapshotRecorder
 from api.ssh.connect import Hop, connect_chain
@@ -64,9 +64,11 @@ from api.watch.shell import CantReachPort, CommandResult, PortClosed, ServerShel
 from api.watch.states import Probe, instance_state
 from api.watch.systemd import (
     UnitInfo,
+    cat_command,
     cgroup_command,
     docker_wrapped,
     list_command,
+    mask_unit_text,
     parse_processes,
     parse_show,
     parse_unit_names,
@@ -158,7 +160,9 @@ class ServerWatch:
         # Set once this server's Docker can't run the env filter: env names only from then on.
         self._env_names_only = False
         # What was last written: name -> (container ID, config, fingerprint). None until a write succeeds.
-        self._recorded: dict[str, tuple[str, LaunchConfig, str | None]] | None = None
+        self._recorded: dict[str, tuple[str, Config, str | None]] | None = None
+        # instance_key -> the last masked unit text read, kept when a later `systemctl cat` fails.
+        self._unit_configs: dict[str, UnitConfig] = {}
         # The sources that write read.
         self._recorded_read: frozenset[InstanceSource] | None = None
         self._record_failing = False
@@ -569,15 +573,26 @@ class ServerWatch:
             return
         if not await self._image_settings(shell, containers, InstanceSource.DOCKER in read):
             return  # tried again at the next discovery
+        unit_configs = await self._read_unit_configs(shell, containers, read)
+        # A scope with a unit that has no text yet can't be told apart from one whose unit vanished.
+        read = read - {c.source for c in containers
+                       if c.source is not InstanceSource.DOCKER and instance_key(c.source, c.name) not in unit_configs}
         seen = []
         for container in containers:
-            spec = self._instances[instance_key(container.source, container.name)].spec
+            key = instance_key(container.source, container.name)
+            if container.source is InstanceSource.DOCKER:
+                config: Config = launch_config(container, self._image_defaults.get(container.image_id))
+            elif key in unit_configs:
+                config = unit_configs[key]
+            else:
+                continue
+            spec = self._instances[key].spec
             key_fingerprint, key_id = fingerprint(spec.api_key) if spec.api_key else (None, None)
             seen.append(Seen(
                 name=container.name, container_id=container.id, created_at=container.created_at,
                 started_at=container.started_at, restart_count=container.restart_count, image_id=container.image_id,
-                model=spec.model, config=launch_config(container, self._image_defaults.get(container.image_id)),
-                key_fingerprint=key_fingerprint, key_id=key_id, source=container.source,
+                model=spec.model, config=config, key_fingerprint=key_fingerprint, key_id=key_id,
+                source=container.source,
             ))
         signature = {instance_key(s.source, s.name): (s.container_id, s.config, s.key_fingerprint) for s in seen}
         # A source read again after a miss may have lost instances the last write couldn't mark removed.
@@ -595,12 +610,40 @@ class ServerWatch:
         self._recorded, self._recorded_read = signature, read
         self._changed_at, self._removed = recorded.changed_at, recorded.removed
 
+    async def _read_unit_configs(self, shell: ServerShell, containers: list[Container],
+                                 read: frozenset[InstanceSource]) -> dict[str, UnitConfig]:
+        """instance_key -> masked unit text, for each systemd container that has one. Units of a scope
+        read this time are asked with `systemctl cat`; a failed or empty answer keeps the text held.
+        Never logged."""
+        units = [c for c in containers if c.source is not InstanceSource.DOCKER]
+        at_once = asyncio.Semaphore(PROBES_AT_ONCE)
+
+        async def cat(container: Container) -> None:
+            if container.source not in read:
+                return
+            async with at_once:
+                result = await shell.run(cat_command(container.name, container.source is InstanceSource.SYSTEMD_USER))
+            if result.exit_status == 0 and result.stdout.strip():
+                self._unit_configs[instance_key(container.source, container.name)] = UnitConfig(
+                    mask_unit_text(result.stdout), container.source)
+
+        try:
+            async with asyncio.TaskGroup() as group:
+                for container in units:
+                    group.create_task(cat(container))
+        except ExceptionGroup as failed:
+            raise failed.exceptions[0] from None
+        keys = {instance_key(c.source, c.name) for c in units}
+        self._unit_configs = {key: config for key, config in self._unit_configs.items() if key in keys}
+        return dict(self._unit_configs)
+
     async def _fill_version(self, instance: _Instance) -> None:
         if self._recorder is None or instance.info is None or not instance.info.version:
             return
         try:
-            await self._recorder.fill_version(self.config.server_id, instance.container.source,
-                                              instance.container.name, instance.container.id, instance.info.version)
+            await self._recorder.record_version(self.config.server_id, instance.container.source,
+                                                instance.container.name, instance.container.id,
+                                                instance.info.version, utcnow())
         except Exception:
             logger.exception("Server %s: couldn't save instance %s's vLLM version", self.config.server_id,
                              instance.container.name)

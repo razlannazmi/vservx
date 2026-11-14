@@ -16,8 +16,8 @@ from api.schemas.snapshot import (
     SnapshotEntryRead,
     SnapshotPageRead,
 )
-from api.snapshots.command import COVERS, ENV_HIDDEN_LINE, compose_line, docker_run
-from api.snapshots.config import config_from_json
+from api.snapshots.command import COVERS, ENV_HIDDEN_LINE, UNIT_COVERS, compose_line, docker_run, unit_command
+from api.snapshots.config import UnitConfig, config_from_json
 from api.snapshots.diff import differences
 from api.snapshots.fingerprint import check_key
 from api.snapshots.recorder import point
@@ -98,14 +98,20 @@ async def _get(session: AsyncSession, server_id: int, snapshot_id: int) -> tuple
 async def _detail(session: AsyncSession, snapshot: Snapshot, name: str, source: InstanceSource) -> SnapshotDetailRead:
     entry = await _entry(session, snapshot, name, source)
     config = config_from_json(snapshot.config) if snapshot.config is not None else None
+    if isinstance(config, UnitConfig):
+        image = image_id = compose = None
+        command, covers, hidden = unit_command(name, config), UNIT_COVERS, False
+    else:
+        image, image_id, covers = (config.image if config else None), snapshot.image_id, COVERS
+        command = docker_run(name, config) if config else None
+        compose = compose_line(config) if config else None
+        hidden = bool(config and config.env_values_hidden)
     return SnapshotDetailRead(
         **entry.model_dump(),
-        image=config.image if config else None, image_id=snapshot.image_id, vllm_version=snapshot.vllm_version,
+        image=image, image_id=image_id, vllm_version=snapshot.vllm_version,
         created_at=snapshot.created_at, started_at=snapshot.started_at, restart_count=snapshot.restart_count,
-        command=docker_run(name, config) if config else None, covers=COVERS,
-        compose=compose_line(config) if config else None,
-        env_hidden=ENV_HIDDEN_LINE if config and config.env_values_hidden else None,
-        env_values_hidden=bool(config and config.env_values_hidden),
+        command=command, covers=covers, compose=compose,
+        env_hidden=ENV_HIDDEN_LINE if hidden else None, env_values_hidden=hidden,
         key_fingerprint=snapshot.key_fingerprint)
 
 

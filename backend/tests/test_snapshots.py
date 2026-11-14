@@ -124,3 +124,8 @@ def test_fingerprint_checks(tmp_path) -> None:
     assert check_key(" vllm-key\n", stored, key_id) is True
     assert check_key("other", stored, key_id) is False
     assert check_key("vllm-key", stored, "00000000") is None
+
+
+def test_old_config_reads_as_docker() -> None:
+    config = config_from_json({"image": "vllm/vllm-openai:v0.11.0", "args": ["serve", "m"]})
+    assert isinstance(config, LaunchConfig) and docker_run("x", config).startswith("docker run -d --name x")

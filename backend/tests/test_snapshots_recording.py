@@ -33,7 +33,7 @@ class StubRecorder:
             raise OSError("database is locked")
         return Recorded({}, [])
 
-    async def fill_version(self, *args: object) -> None:
+    async def record_version(self, *args: object) -> None:
         pass
 
 

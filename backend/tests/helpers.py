@@ -291,6 +291,7 @@ class FakeVLLM:
     keeps the connection open after a complete answer until the client hangs up."""
 
     def __init__(self) -> None:
+        self.version = "0.11.0"
         self._prompt_tokens = 5000
         self._generation_tokens = 1200
         self._lock = threading.Lock()
@@ -327,7 +328,7 @@ class FakeVLLM:
             if path == "/health":
                 return 200, ""
             if path == "/version":
-                return 200, json.dumps({"version": "0.11.0"})
+                return 200, json.dumps({"version": self.version})
             if path == "/v1/models":
                 if authorization != f"Bearer {VLLM_API_KEY}":
                     return 401, json.dumps({"error": "Unauthorized"})
@@ -453,7 +454,7 @@ def _not_found(name: str) -> str:
 class SystemdHost:
     """Answers like a server running vLLM as systemd services. `units` and `files` are what
     list-units and list-unit-files print, `show` the blocks `systemctl show` gives (a unit not in it
-    is not-found), `cat` each unit's text and `procs` each control group's "PID argv" lines.
+    is not-found), `cat` each unit's text (a short default for one not in it) and `procs` each control group's "PID argv" lines.
     `error` makes the system list fail; the user scope answers from `user_units` and `user_show`,
     or fails with `user_error`. Starts with one vLLM service, vllm-llama.service, on `vllm`'s port."""
 
@@ -490,7 +491,7 @@ class SystemdHost:
             self.shown += names
             return "\n".join(blocks.get(name, _not_found(name)).rstrip("\n") + "\n" for name in names), "", 0
         if verb == "cat":
-            return self.cat.get(words[-1], ""), "", 0
+            return self.cat.get(words[-1], f"# /etc/systemd/system/{words[-1]}\n[Service]\nExecStart=/bin/true\n"), "", 0
         return "", f"Unknown command verb {verb}.\n", 1
 
     def __call__(self, command: str, stdin: str) -> tuple[str, str, int]:
