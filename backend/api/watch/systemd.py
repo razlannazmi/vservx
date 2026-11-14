@@ -12,7 +12,9 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+from api.enums import InstanceSource
 from api.snapshots.secrets import SECRET_NAME_PARTS, SECRET_NAME_SUFFIXES, is_secret_env, mask_args, placeholder
+from api.watch.frameworks import Container
 
 # Env a unit keeps with its value. VLLM_API_KEY is held in memory only.
 UNIT_KEPT_ENV = ("VLLM_API_KEY", "CUDA_VISIBLE_DEVICES")
@@ -277,6 +279,18 @@ def systemd_state(info: UnitInfo) -> tuple[str, int | None, bool]:
     if active == "deactivating" or (active == "inactive" and info.result == "success"):
         return ("exited", 0, False)
     return ("dead", info.exit_status, oom)
+
+
+def unit_container(info: UnitInfo, source: InstanceSource, argv: list[str], gpus: list[str] | None) -> Container:
+    """A unit in the shape the watch loop reads Docker's containers in. `argv` is the vLLM command
+    line: the unit's ExecStart, or a wrapper script's vLLM process."""
+    status, exit_code, oom = systemd_state(info)
+    return Container(
+        name=info.name, image="", command=argv, status=status, exit_code=exit_code, oom_killed=oom,
+        restart_count=info.restarts, started_at=info.started_at, finished_at=info.finished_at,
+        network_mode="host", published={}, addresses=[], gpus=gpus, env=dict(info.env),
+        id="", image_id="", launch=None, source=source,
+    )
 
 
 def cgroup_command(control_group: str) -> str | None:

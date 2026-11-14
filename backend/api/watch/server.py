@@ -5,6 +5,7 @@ import asyncio
 import logging
 import random
 from collections import Counter
+from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
@@ -13,7 +14,15 @@ import asyncssh
 
 from api.config import Settings
 from api.db.base import utcnow
-from api.enums import ConnectionFailure, DockerStatus, InstanceSource, InstanceState, ServerKind, WatchState
+from api.enums import (
+    ConnectionFailure,
+    DockerStatus,
+    InstanceSource,
+    InstanceState,
+    ServerKind,
+    SystemdStatus,
+    WatchState,
+)
 from api.schemas.watch import (
     GpuRead,
     RemovedInstanceRead,
@@ -50,10 +59,23 @@ from api.watch.frameworks import (
     framework_for,
     instance_key,
 )
-from api.watch.gpus import GPU_COMMAND, Gpu, gpu_users, parse_gpus
+from api.watch.gpus import COMPUTE_APPS_COMMAND, GPU_COMMAND, Gpu, gpu_users, parse_compute_apps, parse_gpus
 from api.watch.shell import CantReachPort, CommandResult, PortClosed, ServerShell, Shell
 from api.watch.states import Probe, instance_state
+from api.watch.systemd import (
+    UnitInfo,
+    cgroup_command,
+    docker_wrapped,
+    list_command,
+    parse_processes,
+    parse_show,
+    parse_unit_names,
+    show_command,
+    systemd_state,
+    unit_container,
+)
 from api.watch.usage import UsageHistory, UsagePoint
+from api.watch.vllm import VLLM
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +91,15 @@ NO_GPUS = "nvidia-smi isn't available on this server."
 USE_HOST_NETWORKING = "vservx runs in a container: use host networking (network_mode: host) to reach this port."
 # Discoveries an image's own settings are asked for before snapshots go ahead without them.
 IMAGE_TRIES = 3
+# Units asked about in one `systemctl show`.
+SHOW_BATCH = 200
+SYSTEMD_UNREADABLE = "Couldn't read systemd services"
+# Answers that mean the server has no systemd to read: not an error.
+_NO_SYSTEMD = ("System has not been booted with systemd", "Failed to connect to bus")
+# A unit with processes: one whose unit file is gone is still shown while these last.
+_ACTIVE = frozenset({"active", "reloading", "activating", "deactivating"})
+# What a confirmed wrapper script runs, while it isn't running: the name-based rule is vLLM's.
+_WRAPPED = VLLM()
 
 # Docker answers that only a change to the server's settings can fix (which starts a new
 # ServerWatch), so they're not asked again. A rejected sudo password, tried again, can lock the account.
@@ -103,6 +134,10 @@ class _Instance:
     problem: str | None = None
 
 
+def _first_line(text: str) -> str:
+    return next((line.strip() for line in text.splitlines() if line.strip()), "")
+
+
 def usage_read(point: UsagePoint) -> UsagePointRead:
     return UsagePointRead(at=point.at, running=point.running, waiting=point.waiting,
                           kv_cache_percent=point.kv_cache_percent, tokens_in_per_s=point.tokens_in_per_s,
@@ -124,6 +159,8 @@ class ServerWatch:
         self._env_names_only = False
         # What was last written: name -> (container ID, config, fingerprint). None until a write succeeds.
         self._recorded: dict[str, tuple[str, LaunchConfig, str | None]] | None = None
+        # The sources that write read.
+        self._recorded_read: frozenset[InstanceSource] | None = None
         self._record_failing = False
         self._changed_at: dict[str, datetime] = {}
         self._removed: list[RemovedInstanceRead] = []
@@ -142,6 +179,18 @@ class ServerWatch:
         self._since: datetime | None = None
         self._message: str | None = None
         self._docker = DockerAccess(DockerStatus.UNKNOWN, None, None)
+        self._systemd = SystemdStatus.UNKNOWN
+        self._systemd_message: str | None = None
+        # The systemd scopes the latest discovery read.
+        self._systemd_read: frozenset[InstanceSource] = frozenset()
+        # instance_keys of every systemd unit counted: from the database at the first discovery, then
+        # each one counted since. Asked about by name, so a stopped, unloaded unit stays "stopped".
+        self._known: set[str] = set()
+        self._known_loaded = False
+        self._known_failing = False
+        self._user_scope_logged = False
+        # instance_key -> framework, for what the current discovery found.
+        self._found: dict[str, Framework] = {}
         self._instances: dict[str, _Instance] = {}
         self._gpus: list[Gpu] | None = None
         self._gpu_message: str | None = None
@@ -247,33 +296,21 @@ class ServerWatch:
     async def _discover(self, shell: ServerShell) -> None:
         self._discovery_due = False
         self._last_discovery = utcnow()
-        sudo_password = self.config.sudo_password
-        if self._docker.status in _SETTLED:
-            return
-        ps = None
-        if self._docker.prefix is not None:
-            ps = await run_docker(shell, self._docker, PS_ARGS, sudo_password)
-        if ps is None or ps.exit_status != 0:
-            # Not known yet, or the way that worked has stopped working (group or sudoers changed).
-            self._docker, ps = await probe_docker(shell, sudo_password)
-            if ps is None and "docker" in self._hints:
-                self._docker = replace(self._docker, message=self._hints["docker"])
-        if ps is None:
-            return
-        frameworks = {entry.name: framework for entry in parse_ps(ps.stdout)
-                      if (framework := framework_for(entry.image, entry.command))}
-        containers: list[Container] = []
-        if frameworks:
-            inspected = await self._inspect(shell, list(frameworks))
-            if inspected.exit_status != 0 and not inspected.stdout.strip():
-                return  # keep what's known rather than lose every instance's history to one bad answer
-            containers = parse_inspect(inspected.stdout, env_values_hidden=self._env_names_only)
+        self._found = {}
+        # Source -> what it holds now, for each source read this time.
+        read: dict[InstanceSource, list[Container]] = {}
+        if (docker := await self._discover_docker(shell)) is not None:
+            read[InstanceSource.DOCKER] = docker
+        if (units := await self._discover_systemd(shell)) is not None:
+            for source in self._systemd_read:
+                read[source] = [unit for unit in units if unit.source is source]
+        if not read:
+            return  # nothing could be read: keep what's known
+        containers = [container for found in read.values() for container in found]
         found = set()
         for container in containers:
-            framework = frameworks.get(container.name)
-            if framework is None:
-                continue
             key = instance_key(container.source, container.name)
+            framework = self._found[key]
             found.add(key)
             known = self._instances.get(key)
             if known is None or known.container.started_at != container.started_at:
@@ -284,13 +321,43 @@ class ServerWatch:
             known.container, known.spec = container, framework.describe(container)
             if container.status != "running":
                 known.state, known.message = instance_state(container, None, known.ever_ready), None
-        for key in list(self._instances):
-            if key not in found:
+        for key, instance in list(self._instances.items()):
+            # A source that wasn't read keeps what's known of it.
+            if instance.container.source in read and key not in found:
                 del self._instances[key]
                 self._histories.pop(key, None)
         self._found_at = utcnow()
-        await self._record(shell, [container for container in containers
-                                   if instance_key(container.source, container.name) in found])
+        kept = [instance.container for instance in self._instances.values() if instance.container.source not in read]
+        await self._record(shell, containers + kept, frozenset(read))
+
+    async def _discover_docker(self, shell: ServerShell) -> list[Container] | None:
+        """The vLLM containers; None when Docker couldn't be read this time."""
+        sudo_password = self.config.sudo_password
+        if self._docker.status in _SETTLED:
+            return None
+        ps = None
+        if self._docker.prefix is not None:
+            ps = await run_docker(shell, self._docker, PS_ARGS, sudo_password)
+        if ps is None or ps.exit_status != 0:
+            # Not known yet, or the way that worked has stopped working (group or sudoers changed).
+            self._docker, ps = await probe_docker(shell, sudo_password)
+            if ps is None and "docker" in self._hints:
+                self._docker = replace(self._docker, message=self._hints["docker"])
+        if ps is None:
+            return None
+        frameworks = {entry.name: framework for entry in parse_ps(ps.stdout)
+                      if (framework := framework_for(entry.image, entry.command))}
+        if not frameworks:
+            return []
+        inspected = await self._inspect(shell, list(frameworks))
+        if inspected.exit_status != 0 and not inspected.stdout.strip():
+            return None  # keep what's known rather than lose every instance's history to one bad answer
+        containers = []
+        for container in parse_inspect(inspected.stdout, env_values_hidden=self._env_names_only):
+            if (framework := frameworks.get(container.name)) is not None:
+                self._found[instance_key(container.source, container.name)] = framework
+                containers.append(container)
+        return containers
 
     async def _inspect(self, shell: ServerShell, names: list[str]) -> CommandResult:
         """docker inspect, falling back for good to env names only when Docker can't run the filter."""
@@ -303,15 +370,176 @@ class ServerWatch:
             result = await run_docker(shell, self._docker, inspect_args(names, False), sudo_password)
         return result
 
+    # Looking for systemd services
+
+    async def _discover_systemd(self, shell: ServerShell) -> list[Container] | None:
+        """The vLLM services, system ones and the signed-in user's own. None when the system scope
+        couldn't be read this time; self._systemd_read says which scopes were."""
+        self._systemd_read = frozenset()
+        listed = await shell.run(list_command(False))
+        if listed.exit_status != 0:
+            self._systemd, self._systemd_message = self._systemd_failure(listed)
+            return None
+        if not await self._load_known():
+            return None
+        units, error = await self._show_units(shell, InstanceSource.SYSTEMD, listed.stdout)
+        if units is None:
+            self._systemd, self._systemd_message = SystemdStatus.UNAVAILABLE, error or SYSTEMD_UNREADABLE
+            return None
+        self._systemd, self._systemd_message = SystemdStatus.AVAILABLE, None
+        scopes = [(InstanceSource.SYSTEMD, units)]
+        # In a container, only the host's system services can be seen.
+        if not self._in_container and (user_units := await self._user_units(shell)) is not None:
+            scopes.append((InstanceSource.SYSTEMD_USER, user_units))
+        self._systemd_read = frozenset(source for source, _ in scopes)
+        return await self._unit_containers(shell, scopes)
+
+    def _systemd_failure(self, listed: CommandResult) -> tuple[SystemdStatus, str | None]:
+        if listed.exit_status == 127 or any(text in listed.stderr for text in _NO_SYSTEMD):
+            if "systemd" in self._hints:
+                # It's the host's systemd that can't be seen from this container.
+                return SystemdStatus.UNAVAILABLE, self._hints["systemd"]
+            return SystemdStatus.MISSING, None
+        return SystemdStatus.UNAVAILABLE, _first_line(listed.stderr) or SYSTEMD_UNREADABLE
+
+    async def _load_known(self) -> bool:
+        """Fill self._known from the database once per watch. False while it can't be read: without
+        it, a stopped unit nobody lists would be taken as removed."""
+        if self._known_loaded:
+            return True
+        if self._recorder is not None:
+            try:
+                self._known |= await self._recorder.known_systemd(self.config.server_id)
+            except Exception:
+                if not self._known_failing:
+                    logger.exception("Server %s: couldn't read its systemd services from the database; "
+                                     "trying again at the next discovery", self.config.server_id)
+                self._known_failing = True
+                return False
+        self._known_loaded = True
+        return True
+
+    async def _user_units(self, shell: ServerShell) -> list[UnitInfo] | None:
+        """The signed-in user's own services. None when they can't be read, as when there's no user
+        bus over SSH: skipped without a word to people, and logged once per watch."""
+        listed = await shell.run(list_command(True))
+        units, error = None, _first_line(listed.stderr)
+        if listed.exit_status == 0:
+            units, error = await self._show_units(shell, InstanceSource.SYSTEMD_USER, listed.stdout)
+        if units is None and not self._user_scope_logged:
+            logger.info("Server %s: not reading systemctl --user services: %s", self.config.server_id,
+                        error or "no error message")
+            self._user_scope_logged = True
+        return units
+
+    async def _show_units(self, shell: ServerShell, source: InstanceSource,
+                          listed: str) -> tuple[list[UnitInfo] | None, str]:
+        """`systemctl show` for the scope's listed units and its known ones, SHOW_BATCH at a time.
+        (None, first stderr line) when a batch reads as no units at all: systemctl's own exit status
+        is lost in the pipe to awk."""
+        prefix = f"{source}:"
+        known = sorted(key.removeprefix(prefix) for key in self._known if key.startswith(prefix))
+        names = list(dict.fromkeys([*parse_unit_names(listed), *known]))
+        user = source is InstanceSource.SYSTEMD_USER
+        units: list[UnitInfo] = []
+        for start in range(0, len(names), SHOW_BATCH):
+            result = await shell.run(show_command(names[start:start + SHOW_BATCH], user))
+            batch = parse_show(result.stdout)
+            if not batch:
+                return None, _first_line(result.stderr)
+            units += batch
+        return units, ""
+
+    async def _unit_containers(self, shell: ServerShell,
+                               scopes: list[tuple[InstanceSource, list[UnitInfo]]]) -> list[Container]:
+        compute_apps: list[dict[int, str] | None] = []
+
+        async def gpu_processes() -> dict[int, str] | None:
+            """PID -> GPU UUID, asked once per discovery; None without nvidia-smi."""
+            if not compute_apps:
+                result = await shell.run(COMPUTE_APPS_COMMAND)
+                compute_apps.append(parse_compute_apps(result.stdout) if result.exit_status == 0 else None)
+            return compute_apps[0]
+
+        containers = []
+        for source, units in scopes:
+            for info in units:
+                key = instance_key(source, info.name)
+                # An alias (list-unit-files lists them) shows as its unit's Id: count each unit once.
+                if key in self._found:
+                    continue
+                counted = await self._count_unit(shell, source, info)
+                if counted is None:
+                    continue
+                argv, framework, pids = counted
+                self._known.add(key)
+                self._found[key] = framework
+                gpus = await self._unit_gpus(shell, info, pids, gpu_processes)
+                containers.append(unit_container(info, source, argv, gpus))
+        return containers
+
+    async def _count_unit(self, shell: ServerShell, source: InstanceSource,
+                          info: UnitInfo) -> tuple[list[str], Framework, list[int] | None] | None:
+        """(vLLM's command line, its framework, the unit's PIDs when they were read) when the unit
+        runs vLLM; None for anything else."""
+        if info.load_state == "not-found" and info.active_state not in _ACTIVE:
+            return None  # its unit file is gone
+        if docker_wrapped(info.argv):
+            return None  # Docker discovery finds its container
+        if framework := framework_for("", " ".join(info.argv)):
+            return info.argv, framework, None
+        if "vllm" not in info.name.lower():
+            return None
+        # A wrapper script: whether it runs vLLM, or a container, shows only in its processes.
+        key = instance_key(source, info.name)
+        confirmed = self._known_framework(key) if key in self._known else None
+        if systemd_state(info)[0] != "running":
+            return (info.argv, confirmed, None) if confirmed is not None else None
+        command = cgroup_command(info.control_group)
+        processes = parse_processes((await shell.run(command)).stdout) if command is not None else []
+        if any(docker_wrapped(argv) for _, argv in processes):
+            return None
+        pids = [pid for pid, _ in processes]
+        for _, argv in processes:
+            if framework := framework_for("", " ".join(argv)):
+                return argv, framework, pids
+        # Seen running vLLM before, and not yet at it again (still in the script, say): not removed.
+        return (info.argv, confirmed, pids) if confirmed is not None else None
+
+    def _known_framework(self, key: str) -> Framework:
+        known = self._instances.get(key)
+        return known.framework if known is not None else _WRAPPED
+
+    async def _unit_gpus(self, shell: ServerShell, info: UnitInfo, pids: list[int] | None,
+                         gpu_processes: Callable[[], Awaitable[dict[int, str] | None]]) -> list[str] | None:
+        """From CUDA_VISIBLE_DEVICES when the unit sets it; otherwise, while it runs, the GPUs its
+        processes compute on (vLLM's workers too, not only its main PID)."""
+        visible = info.env.get("CUDA_VISIBLE_DEVICES")
+        if visible is not None:
+            return [part.strip() for part in visible.split(",") if part.strip()]
+        if systemd_state(info)[0] != "running":
+            return None
+        if pids is None:
+            command = cgroup_command(info.control_group)
+            if command is None:
+                return None
+            pids = [pid for pid, _ in parse_processes((await shell.run(command)).stdout)]
+        apps = await gpu_processes()
+        if apps is None:
+            return None
+        return sorted({apps[pid] for pid in pids if pid in apps})
+
     # Recording snapshots
 
-    async def _image_settings(self, shell: ServerShell, containers: list[Container]) -> bool:
+    async def _image_settings(self, shell: ServerShell, containers: list[Container], docker_read: bool) -> bool:
         """Read the images' own settings once each. False while one couldn't be read yet: a config
         built without them would hold the image's inherited env and entrypoint, then change once
         they read fine. An image still unreadable after IMAGE_TRIES discoveries is given up on."""
         missing = sorted({c.image_id for c in containers if c.image_id and c.image_id not in self._image_defaults})
         if not missing:
             return True
+        if not docker_read:
+            return False  # asked at a discovery that reads Docker
         result = await run_docker(shell, self._docker, image_inspect_args(missing, not self._env_names_only),
                                   self.config.sudo_password)
         try:
@@ -333,12 +561,13 @@ class ServerWatch:
                 known = False
         return known
 
-    async def _record(self, shell: ServerShell, containers: list[Container]) -> None:
-        """Hand what was found to the recorder, unless nothing changed since the last write. A
-        failed write is tried again at the next discovery; watching carries on regardless."""
+    async def _record(self, shell: ServerShell, containers: list[Container], read: frozenset[InstanceSource]) -> None:
+        """Hand what was found to the recorder, unless nothing changed since the last write. `read`
+        is the sources read this time; `containers` holds what's known of the others too. A failed
+        write is tried again at the next discovery; watching carries on regardless."""
         if self._recorder is None:
             return
-        if not await self._image_settings(shell, containers):
+        if not await self._image_settings(shell, containers, InstanceSource.DOCKER in read):
             return  # tried again at the next discovery
         seen = []
         for container in containers:
@@ -351,11 +580,11 @@ class ServerWatch:
                 key_fingerprint=key_fingerprint, key_id=key_id, source=container.source,
             ))
         signature = {instance_key(s.source, s.name): (s.container_id, s.config, s.key_fingerprint) for s in seen}
-        if signature == self._recorded:
+        # A source read again after a miss may have lost instances the last write couldn't mark removed.
+        if signature == self._recorded and read == self._recorded_read:
             return
         try:
-            recorded = await self._recorder.record(self.config.server_id, seen, utcnow(),
-                                                   frozenset({InstanceSource.DOCKER}))
+            recorded = await self._recorder.record(self.config.server_id, seen, utcnow(), read)
         except Exception:
             if not self._record_failing:
                 logger.exception("Server %s: couldn't save launch snapshots; trying again at the next discovery",
@@ -363,7 +592,8 @@ class ServerWatch:
             self._record_failing = True
             return
         self._record_failing = False
-        self._recorded, self._changed_at, self._removed = signature, recorded.changed_at, recorded.removed
+        self._recorded, self._recorded_read = signature, read
+        self._changed_at, self._removed = recorded.changed_at, recorded.removed
 
     async def _fill_version(self, instance: _Instance) -> None:
         if self._recorder is None or instance.info is None or not instance.info.version:
@@ -517,6 +747,7 @@ class ServerWatch:
         return ServerWatchRead(
             server_id=self.config.server_id, state=self._state, since=self._since, message=self._message,
             docker=self._docker.status, docker_message=self._docker.message,
+            systemd=self._systemd, systemd_message=self._systemd_message,
             found_at=self._found_at, read_at=self._read_at,
             instances=[self._instance_read(instance) for instance in instances],
             removed=removed,

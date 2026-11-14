@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import shlex
 import threading
 import time
 from collections.abc import Awaitable, Callable, Coroutine
@@ -425,3 +426,85 @@ class DockerHost:
 
 def docker_host(vllm: FakeVLLM, *, sudo_password: str) -> DockerHost:
     return DockerHost(vllm, sudo_password)
+
+
+# --- A server running vLLM as systemd services.
+
+
+def show_block(name: str, exec_start: str, *, active: str = "active", sub: str = "running", load: str = "loaded",
+               env: str = "", control_group: str | None = None) -> str:
+    """One unit's `systemctl show` block, as the env filter passes it on."""
+    group = f"/system.slice/{name}" if control_group is None else control_group
+    return "\n".join([
+        f"Id={name}", f"LoadState={load}", f"ActiveState={active}", f"SubState={sub}", "Result=success",
+        "ExecMainStatus=0", "ExecMainStartTimestamp=Thu 2026-11-12 08:00:00 UTC", "ExecMainExitTimestamp=",
+        "NRestarts=0",
+        f"ExecStart={{ path={exec_start.split()[0]} ; argv[]={exec_start} ; ignore_errors=no ; start_time=[n/a] ;"
+        " stop_time=[n/a] ; pid=0 ; code=(null) ; status=0/0 }",
+        f"Environment={env}", f"ControlGroup={group}", "",
+    ])
+
+
+def _not_found(name: str) -> str:
+    return "\n".join([f"Id={name}", "LoadState=not-found", "ActiveState=inactive", "SubState=dead",
+                      "Result=success", "ExecStart=", "Environment=", "ControlGroup=", ""])
+
+
+class SystemdHost:
+    """Answers like a server running vLLM as systemd services. `units` and `files` are what
+    list-units and list-unit-files print, `show` the blocks `systemctl show` gives (a unit not in it
+    is not-found), `cat` each unit's text and `procs` each control group's "PID argv" lines.
+    `error` makes the system list fail; the user scope answers from `user_units` and `user_show`,
+    or fails with `user_error`. Starts with one vLLM service, vllm-llama.service, on `vllm`'s port."""
+
+    def __init__(self, vllm: FakeVLLM) -> None:
+        self.units = "vllm-llama.service loaded active running vLLM\n"
+        self.files = "vllm-llama.service enabled enabled\n"
+        self.show = show_block("vllm-llama.service", f"/opt/venv/bin/vllm serve {MODEL} --port {vllm.port}",
+                               env=f"VLLM_API_KEY={VLLM_API_KEY} CUDA_VISIBLE_DEVICES=0")
+        self.cat: dict[str, str] = {}
+        self.procs: dict[str, str] = {}
+        self.error: str | None = None
+        self.user_units = ""
+        self.user_show = ""
+        self.user_error: str | None = None
+        self.compute_apps = ""
+        self.docker_missing = True
+        # Every unit name `systemctl show` was asked for.
+        self.shown: list[str] = []
+
+    def _systemctl(self, command: str) -> tuple[str, str, int]:
+        words = shlex.split(command.removeprefix("TZ=UTC LC_ALL=C ").split(" | ", 1)[0])
+        user = words[1] == "--user"
+        if user and self.user_error is not None:
+            return "", self.user_error, 1
+        verb = words[2 if user else 1]
+        if verb == "list-units":
+            if not user and self.error is not None:
+                return "", self.error, 1
+            return self.user_units if user else self.units + self.files, "", 0
+        if verb == "show":
+            blocks = {block.split("\n", 1)[0].removeprefix("Id="): block
+                      for block in (self.user_show if user else self.show).split("\n\n") if block.strip()}
+            names = words[words.index("--") + 1:]
+            self.shown += names
+            return "\n".join(blocks.get(name, _not_found(name)).rstrip("\n") + "\n" for name in names), "", 0
+        if verb == "cat":
+            return self.cat.get(words[-1], ""), "", 0
+        return "", f"Unknown command verb {verb}.\n", 1
+
+    def __call__(self, command: str, stdin: str) -> tuple[str, str, int]:
+        if command == "hostname":
+            return "gpu-7\n", "", 0
+        if command.startswith(("systemctl ", "TZ=UTC LC_ALL=C systemctl ")):
+            return self._systemctl(command)
+        if command.startswith("cg="):
+            group = shlex.split(command.split(";", 1)[0])[0].removeprefix("cg=")
+            return self.procs.get(group, ""), "", 0
+        if command.startswith("docker ") and not self.docker_missing:
+            return "", "", 0
+        if command.startswith("nvidia-smi --query-compute-apps"):
+            return self.compute_apps, "", 0
+        if command.startswith("nvidia-smi "):
+            return NVIDIA_SMI_OUTPUT, "", 0
+        return "", f"bash: {command.split()[0]}: command not found\n", 127

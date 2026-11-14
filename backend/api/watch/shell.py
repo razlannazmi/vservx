@@ -46,6 +46,11 @@ class CantReachPort(Exception):
     """vservx has no way to reach the port; str(exc) is the message for people."""
 
 
+def url_host(host: str) -> str:
+    """The host as a URL or a Host header writes it: an IPv6 literal (vLLM's --host ::1) in brackets, once."""
+    return f"[{host}]" if ":" in host and not host.startswith("[") else host
+
+
 def _fields(head: bytes) -> dict[bytes, bytes]:
     """The header fields, by lowercase name."""
     fields = {}
@@ -146,7 +151,8 @@ async def exchange(
         # The answer ends after Content-Length bytes, after its last chunk, or when the connection
         # closes. Some servers (or what's between them and sshd) keep it open after a complete
         # answer, so don't wait for the close once the answer says it's all in.
-        lines = [f"GET {path} HTTP/1.0", f"Host: {host}:{port}", *(f"{k}: {v}" for k, v in headers.items()), "", ""]
+        lines = [f"GET {path} HTTP/1.0", f"Host: {url_host(host)}:{port}", *(f"{k}: {v}" for k, v in headers.items()),
+                 "", ""]
         writer.write("\r\n".join(lines).encode())
         progress = _AnswerProgress()
         while len(received) < MAX_BODY:
@@ -209,7 +215,7 @@ class Shell:
         # Headers (an API key) go on stdin, never on the command line where `ps` would show them.
         if headers:
             command += ["-H", "@-"]
-        command.append(f"http://{host}:{port}{path}")
+        command.append(f"http://{url_host(host)}:{port}{path}")
         stdin = "".join(f"{k}: {v}\n" for k, v in headers.items()) if headers else None
         result = await self.run(" ".join(map(shlex.quote, command)), stdin)
         if result.exit_status == 0:

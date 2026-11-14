@@ -1,4 +1,4 @@
-"""A server's GPUs, from nvidia-smi, and which containers use them."""
+"""A server's GPUs, from nvidia-smi, and which containers and services use them."""
 
 from dataclasses import dataclass
 
@@ -6,6 +6,8 @@ from api.watch.frameworks import Container
 
 GPU_COMMAND = ("nvidia-smi --query-gpu=index,uuid,name,utilization.gpu,memory.used,memory.total,temperature.gpu "
                "--format=csv,noheader,nounits")
+# The processes computing on each GPU, to match a systemd service's processes to its GPUs.
+COMPUTE_APPS_COMMAND = "nvidia-smi --query-compute-apps=pid,gpu_uuid --format=csv,noheader"
 
 
 @dataclass(frozen=True)
@@ -40,8 +42,18 @@ def parse_gpus(stdout: str) -> list[Gpu]:
     return gpus
 
 
+def parse_compute_apps(stdout: str) -> dict[int, str]:
+    """COMPUTE_APPS_COMMAND's answer: PID -> UUID of the GPU it computes on."""
+    apps = {}
+    for line in stdout.splitlines():
+        pid, sep, uuid = (part.strip() for part in line.partition(","))
+        if sep and pid.isdigit() and uuid:
+            apps[int(pid)] = uuid
+    return apps
+
+
 def gpu_users(gpus: list[Gpu], containers: list[Container]) -> dict[int, list[str]]:
-    """GPU index -> names of the running containers Docker gave it."""
+    """GPU index -> names of the running containers (Docker's, or systemd services) that use it."""
     users: dict[int, list[str]] = {}
     for container in containers:
         if container.status != "running" or not container.gpus:

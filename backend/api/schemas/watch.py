@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from api.enums import DockerStatus, InstanceSource, InstanceState, WatchState
+from api.enums import DockerStatus, InstanceSource, InstanceState, SystemdStatus, WatchState
 
 # Defaults would otherwise mark fields optional in the OpenAPI response schema.
 _READ = ConfigDict(json_schema_serialization_defaults_required=True)
@@ -73,7 +73,7 @@ class GpuRead(BaseModel):
     memory_used_mib: float | None
     memory_total_mib: float | None
     temperature_c: float | None
-    # Containers Docker gave this GPU.
+    # Containers Docker gave this GPU, and systemd services using it.
     instances: list[str]
 
 
@@ -86,6 +86,10 @@ class ServerWatchRead(BaseModel):
     message: str | None
     docker: DockerStatus
     docker_message: str | None
+    # Whether systemd services could be read. systemd_message says why not, except when the
+    # server has no systemd, which isn't a problem.
+    systemd: SystemdStatus = SystemdStatus.UNKNOWN
+    systemd_message: str | None = None
     # When instances were last looked for, and when usage was last read.
     found_at: datetime | None
     read_at: datetime | None
@@ -123,7 +127,8 @@ class ServerCountsRead(BaseModel):
     unreachable: int
     # Unreachable, sign-in failed, or host key changed.
     trouble: int
-    # Connected, but Docker can't be used, so its instances can't be seen.
+    # Connected, but Docker can't be used, so its instances can't be seen. A server without Docker
+    # whose systemd services are read isn't one.
     docker_problem: int
 
 
