@@ -301,6 +301,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/this-machine": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get This Machine
+         * @description Whether this machine can be added as a server, and what it calls itself.
+         */
+        get: operations["get_this_machine_api_admin_this_machine_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces": {
         parameters: {
             query?: never;
@@ -984,6 +1004,12 @@ export interface components {
             points: components["schemas"]["UsagePointRead"][];
         };
         /**
+         * InstanceSource
+         * @description What runs an instance.
+         * @enum {string}
+         */
+        InstanceSource: "docker" | "systemd" | "systemd-user";
+        /**
          * InstanceState
          * @description What a watched instance is doing, from its container and its health check.
          * @enum {string}
@@ -1093,6 +1119,7 @@ export interface components {
         RemovedInstanceRead: {
             /** Name */
             name: string;
+            source: components["schemas"]["InstanceSource"];
             /** Image */
             image: string | null;
             /** Model */
@@ -1197,16 +1224,18 @@ export interface components {
         ServerCreate: {
             /** Name */
             name: string;
+            /** @default ssh */
+            kind: components["schemas"]["ServerKind"];
             /** Host */
-            host: string;
+            host?: string | null;
             /**
              * Port
              * @default 22
              */
             port: number;
             /** Username */
-            username: string;
-            auth_type: components["schemas"]["AuthType"];
+            username?: string | null;
+            auth_type?: components["schemas"]["AuthType"] | null;
             /** Ssh Key Id */
             ssh_key_id?: number | null;
             /** Jump Server Id */
@@ -1221,20 +1250,28 @@ export interface components {
             /** Sudo Password */
             sudo_password?: string | null;
         };
+        /**
+         * ServerKind
+         * @description How vservx reaches a server.
+         * @enum {string}
+         */
+        ServerKind: "ssh" | "this_machine";
         /** ServerRead */
         ServerRead: {
             /** Name */
             name: string;
+            /** @default ssh */
+            kind: components["schemas"]["ServerKind"];
             /** Host */
-            host: string;
+            host: string | null;
             /**
              * Port
              * @default 22
              */
             port: number;
             /** Username */
-            username: string;
-            auth_type: components["schemas"]["AuthType"];
+            username: string | null;
+            auth_type: components["schemas"]["AuthType"] | null;
             /** Ssh Key Id */
             ssh_key_id: number | null;
             /** Jump Server Id */
@@ -1272,11 +1309,12 @@ export interface components {
          * ServerUpdate
          * @description Partial update: omitted fields are left unchanged, null clears an optional field.
          *
-         *     Apply with model_dump(exclude_unset=True), then run check_auth_fields on the merged result.
+         *     Apply with model_dump(exclude_unset=True), then run check_kind_fields on the merged result.
          */
         ServerUpdate: {
             /** Name */
             name?: string | null;
+            kind?: components["schemas"]["ServerKind"] | null;
             /** Host */
             host?: string | null;
             /** Port */
@@ -1307,6 +1345,10 @@ export interface components {
             docker: components["schemas"]["DockerStatus"];
             /** Docker Message */
             docker_message: string | null;
+            /** @default unknown */
+            systemd: components["schemas"]["SystemdStatus"];
+            /** Systemd Message */
+            systemd_message: string | null;
             /** Found At */
             found_at: string | null;
             /** Read At */
@@ -1353,6 +1395,7 @@ export interface components {
             id: number;
             /** Instance */
             instance: string;
+            source: components["schemas"]["InstanceSource"];
             /** Model */
             model: string | null;
             kind: components["schemas"]["SnapshotKind"];
@@ -1403,6 +1446,7 @@ export interface components {
             id: number;
             /** Instance */
             instance: string;
+            source: components["schemas"]["InstanceSource"];
             /** Model */
             model: string | null;
             kind: components["schemas"]["SnapshotKind"];
@@ -1435,6 +1479,24 @@ export interface components {
             entries: components["schemas"]["SnapshotEntryRead"][];
             /** Next Before */
             next_before: string | null;
+        };
+        /**
+         * SystemdStatus
+         * @description Whether vservx can read systemd services on a server.
+         * @enum {string}
+         */
+        SystemdStatus: "unknown" | "available" | "missing" | "unavailable";
+        /**
+         * ThisMachineRead
+         * @description Whether vservx can watch the machine it runs on, and what that machine calls itself.
+         */
+        ThisMachineRead: {
+            /** Available */
+            available: boolean;
+            /** Reason */
+            reason: string | null;
+            /** Hostname */
+            hostname: string;
         };
         /** TokenResponse */
         TokenResponse: {
@@ -1524,7 +1586,7 @@ export interface components {
          * @description Where vservx stands with watching a server.
          * @enum {string}
          */
-        WatchState: "not_tested" | "jump_only" | "checking" | "connected" | "unreachable" | "sign_in_failed" | "host_key_changed";
+        WatchState: "not_tested" | "jump_only" | "checking" | "connected" | "unreachable" | "sign_in_failed" | "host_key_changed" | "needs_admin_owner";
         /**
          * WatchSummaryRead
          * @description What a server card needs.
@@ -1545,6 +1607,7 @@ export interface components {
         WatchedInstanceRead: {
             /** Name */
             name: string;
+            source: components["schemas"]["InstanceSource"];
             /** Framework */
             framework: string;
             state: components["schemas"]["InstanceState"];
@@ -2143,6 +2206,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_this_machine_api_admin_this_machine_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThisMachineRead"];
                 };
             };
         };
@@ -3013,7 +3096,9 @@ export interface operations {
     };
     get_instance_history_api_workspaces__workspace_id__servers__server_id__instances__name__history_get: {
         parameters: {
-            query?: never;
+            query?: {
+                source?: components["schemas"]["InstanceSource"];
+            };
             header?: never;
             path: {
                 server_id: number;
@@ -3114,6 +3199,7 @@ export interface operations {
     list_instance_snapshots_api_workspaces__workspace_id__servers__server_id__instances__name__snapshots_get: {
         parameters: {
             query?: {
+                source?: components["schemas"]["InstanceSource"];
                 limit?: number;
                 before?: string | null;
             };

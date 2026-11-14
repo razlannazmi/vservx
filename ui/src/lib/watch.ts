@@ -26,6 +26,10 @@ export const WATCH_POLL_MS = 5_000;
 /** Minutes of usage the charts show; matches the backend's `history_minutes` default. */
 export const HISTORY_MINUTES = 30;
 
+/** The state label, and its detail, for this machine in a workspace no app admin owns. */
+export const NEEDS_ADMIN_OWNER = "Needs an admin owner";
+export const NEEDS_ADMIN_OWNER_DETAIL = "This machine is only watched while an app admin owns this workspace.";
+
 export const INSTANCE_WORDS: Record<InstanceState, string> = {
   ready: "Ready",
   starting: "Starting",
@@ -83,6 +87,8 @@ export function cardStatus(server: ServerRead, summary: WatchSummaryRead | undef
       return { tone: "none", label: "checking…" };
     case "host_key_changed":
       return { tone: "warn", label: "host key changed" };
+    case "needs_admin_owner":
+      return { tone: "warn", label: NEEDS_ADMIN_OWNER };
     case "sign_in_failed":
       return { tone: "bad", label: "sign-in failed" };
     case "unreachable":

@@ -4,7 +4,7 @@
   import { tick, untrack } from "svelte";
   import { toast } from "svelte-sonner";
   import { fade, slide } from "svelte/transition";
-  import { api, errorMessage, type SavedKeyRead, type ServerRead, type ServerWatchRead } from "$lib/api/client";
+  import { api, errorMessage, type InstanceSource, type SavedKeyRead, type ServerRead, type ServerWatchRead } from "$lib/api/client";
   import CollapsibleSection from "$lib/components/CollapsibleSection.svelte";
   import ConnectionDetails from "$lib/components/ConnectionDetails.svelte";
   import GpuStrip from "$lib/components/GpuStrip.svelte";
@@ -17,9 +17,9 @@
   import { duration, easeOut } from "$lib/motion";
   import { every } from "$lib/poll";
   import { followLink, navigate, router } from "$lib/router.svelte";
-  import { serverStatus, TONE_DOT, type Tone } from "$lib/servers";
+  import { serverAddress, serverStatus, TONE_DOT, type Tone } from "$lib/servers";
   import { drawerSearch, readDrawer, type DrawerState } from "$lib/snapshots";
-  import { HISTORY_MINUTES, WATCH_POLL_MS } from "$lib/watch";
+  import { HISTORY_MINUTES, NEEDS_ADMIN_OWNER, NEEDS_ADMIN_OWNER_DETAIL, WATCH_POLL_MS } from "$lib/watch";
 
   let {
     workspaceId,
@@ -87,7 +87,7 @@
   const detailsOpen = $derived(
     detailsChosen ??
       (server.jump_only ||
-        !server.host_key_fingerprint ||
+        (server.kind === "ssh" && !server.host_key_fingerprint) ||
         server.last_test?.failure === "host_key_changed" ||
         view?.state === "not_tested" ||
         view?.state === "host_key_changed"),
@@ -111,6 +111,8 @@
         return { tone: "bad", label: "Sign-in failed" };
       case "host_key_changed":
         return { tone: "warn", label: "Host key changed" };
+      case "needs_admin_owner":
+        return { tone: "warn", label: NEEDS_ADMIN_OWNER };
       case "jump_only":
         return serverStatus(server);
     }
@@ -165,6 +167,15 @@
     if (watched) await loadView();
   }
 
+  // Which kind of instance a name is, for the requests that ask about one.
+  function sourceOf(name: string): InstanceSource {
+    return (
+      view?.instances.find((each) => each.name === name)?.source ??
+      view?.removed.find((each) => each.name === name)?.source ??
+      "docker"
+    );
+  }
+
   function instanceHref(name: string): string {
     return `${base}/servers/${server.id}/instances/${encodeURIComponent(name)}`;
   }
@@ -190,7 +201,7 @@
     <div class="flex flex-wrap items-start justify-between gap-3">
       <div class="min-w-0 space-y-1">
         <h2 id="server-details-name" class="truncate text-lg font-semibold tracking-tight">{server.name}</h2>
-        <p class="font-mono text-sm break-all text-muted-foreground">{server.username}@{server.host}:{server.port}</p>
+        <p class="font-mono text-sm break-all text-muted-foreground">{serverAddress(server)}</p>
       </div>
       <div class="flex shrink-0 gap-2">
         {#if watched}
@@ -227,8 +238,13 @@
         Connection details
       </button>
     </div>
-    {#if view && !connected && view.message}
+    {#if view?.state === "needs_admin_owner"}
+      <p class="text-xs text-muted-foreground">{NEEDS_ADMIN_OWNER_DETAIL}</p>
+    {:else if view && !connected && view.message}
       <p class="text-xs text-muted-foreground">{view.message}</p>
+    {/if}
+    {#if view?.systemd === "unavailable"}
+      <p class="text-xs text-muted-foreground">systemd: {view.systemd_message}</p>
     {/if}
   </header>
 
@@ -325,6 +341,7 @@
     serverId={server.id}
     serverName={server.name}
     pageInstance={selectedName}
+    {sourceOf}
     {drawer}
     onchange={(next) => (drawer = next)}
     onclose={() => (drawer = null)}

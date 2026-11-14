@@ -5,6 +5,7 @@
   import {
     api,
     errorMessage,
+    type InstanceSource,
     type SnapshotCompareRead,
     type SnapshotDetailRead,
     type SnapshotEntryRead,
@@ -24,6 +25,7 @@
     serverId,
     serverName,
     pageInstance,
+    sourceOf,
     drawer,
     onchange,
     onclose,
@@ -32,6 +34,7 @@
     serverId: number;
     serverName: string;
     pageInstance: string | null;
+    sourceOf: (name: string) => InstanceSource;
     drawer: DrawerState;
     onchange: (drawer: DrawerState) => void;
     onclose: () => void;
@@ -110,7 +113,7 @@
     const result =
       showing === "instance" && target
         ? await api.GET("/api/workspaces/{workspace_id}/servers/{server_id}/instances/{name}/snapshots", {
-            params: { path: { ...path, name: target }, query: { before } },
+            params: { path: { ...path, name: target }, query: { before, source: sourceOf(target) } },
           })
         : await api.GET("/api/workspaces/{workspace_id}/servers/{server_id}/snapshots", {
             params: { path, query: { before } },

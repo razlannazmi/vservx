@@ -75,24 +75,26 @@
 </script>
 
 <div class="space-y-4">
-  <dl class="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
-    <dt class="text-muted-foreground">Signs in with</dt>
-    <dd>{signsInWith}</dd>
-    <dt class="text-muted-foreground">Route</dt>
-    <dd class="font-mono break-words">{route}</dd>
-    <dt class="text-muted-foreground">Host key</dt>
-    <dd>
-      {#if server.host_key_fingerprint}
-        <span class="font-mono">{server.host_key_type}</span> · <HostKey fingerprint={server.host_key_fingerprint} />
-        {#if server.host_key_recorded_at}
-          <span class="text-muted-foreground" title={localDateTime(server.host_key_recorded_at)}>
-            · recorded {relativeTime(server.host_key_recorded_at)}</span>
+  {#if server.kind === "ssh"}
+    <dl class="grid grid-cols-[7.5rem_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm">
+      <dt class="text-muted-foreground">Signs in with</dt>
+      <dd>{signsInWith}</dd>
+      <dt class="text-muted-foreground">Route</dt>
+      <dd class="font-mono break-words">{route}</dd>
+      <dt class="text-muted-foreground">Host key</dt>
+      <dd>
+        {#if server.host_key_fingerprint}
+          <span class="font-mono">{server.host_key_type}</span> · <HostKey fingerprint={server.host_key_fingerprint} />
+          {#if server.host_key_recorded_at}
+            <span class="text-muted-foreground" title={localDateTime(server.host_key_recorded_at)}>
+              · recorded {relativeTime(server.host_key_recorded_at)}</span>
+          {/if}
+        {:else}
+          <span class="text-muted-foreground">not recorded yet</span>
         {/if}
-      {:else}
-        <span class="text-muted-foreground">not recorded yet</span>
-      {/if}
-    </dd>
-  </dl>
+      </dd>
+    </dl>
+  {/if}
 
   {#if keyChanged}
     <div class="space-y-2 rounded-lg border border-warn-border bg-warn-bg px-4 py-3 text-sm">

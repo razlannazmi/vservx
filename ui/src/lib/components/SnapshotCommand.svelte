@@ -51,22 +51,25 @@
 {#if detail.command}
   <!-- The buttons get their own strip above the command, so they never sit over its text or scrollbars. -->
   <div class="overflow-hidden rounded-lg border">
-    <div class="flex items-center justify-end gap-1 border-b bg-background px-2 py-1.5">
-      <Button
-        size="icon-xs"
-        variant="outline"
-        class="dark:bg-background"
-        aria-label="What this command covers"
-        title="What this command covers"
-        aria-expanded={coversOpen}
-        aria-controls="snapshot-covers"
-        onclick={() => (coversOpen = !coversOpen)}
-      >
-        <InfoIcon aria-hidden="true" />
-      </Button>
-      <Button size="xs" variant="outline" class="dark:bg-background" onclick={() => copy(detail.command ?? "")}>
-        Copy
-      </Button>
+    <div class="flex items-center justify-between gap-1 border-b bg-background px-2 py-1.5">
+      <span class="text-xs text-muted-foreground">{detail.source === "docker" ? "" : "Unit file"}</span>
+      <div class="flex items-center gap-1">
+        <Button
+          size="icon-xs"
+          variant="outline"
+          class="dark:bg-background"
+          aria-label="What this command covers"
+          title="What this command covers"
+          aria-expanded={coversOpen}
+          aria-controls="snapshot-covers"
+          onclick={() => (coversOpen = !coversOpen)}
+        >
+          <InfoIcon aria-hidden="true" />
+        </Button>
+        <Button size="xs" variant="outline" class="dark:bg-background" onclick={() => copy(detail.command ?? "")}>
+          Copy
+        </Button>
+      </div>
     </div>
     <pre class="max-h-80 overflow-auto bg-muted/40 p-3 font-mono text-xs leading-5">{detail.command}</pre>
   </div>

@@ -4,7 +4,7 @@
   import { api, type UsagePointRead, type WatchedInstanceRead } from "$lib/api/client";
   import UsageChart from "$lib/components/UsageChart.svelte";
   import { duration, easeOut } from "$lib/motion";
-  import { TONE_DOT } from "$lib/servers";
+  import { instanceOrigin, TONE_DOT } from "$lib/servers";
   import {
     formatNumber,
     formatSeconds,
@@ -48,7 +48,7 @@
   async function loadHistory(name: string) {
     points = [];
     const { data } = await api.GET("/api/workspaces/{workspace_id}/servers/{server_id}/instances/{name}/history", {
-      params: { path: { workspace_id: workspaceId, server_id: serverId, name } },
+      params: { path: { workspace_id: workspaceId, server_id: serverId, name }, query: { source: instance.source } },
     });
     if (!data || name !== instance.name) return;
     cap = Math.max(1, Math.round(HISTORY_SECONDS / data.interval_seconds));
@@ -71,7 +71,11 @@
     </p>
     <p class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
       <span class="font-mono font-medium break-all text-foreground">{instance.model ?? "—"}</span>
-      <span>image <span class="font-mono break-all">{instance.image}</span></span>
+      {#if instance.source === "docker"}
+        <span>image <span class="font-mono break-all">{instance.image}</span></span>
+      {:else}
+        <span class="font-mono break-all">{instanceOrigin(instance)}</span>
+      {/if}
       <span>context <span class="font-mono tabular-nums">{formatNumber(instance.max_model_len)}</span></span>
       <span>{instance.framework === "vllm" ? "vLLM" : instance.framework} <span class="font-mono">{instance.version ?? "—"}</span></span>
     </p>
