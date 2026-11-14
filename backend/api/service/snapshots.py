@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.enums import SnapshotKind
+from api.enums import InstanceSource, SnapshotKind
 from api.models import Instance, Snapshot
 from api.schemas.snapshot import (
     CheckKeyRead,
@@ -60,20 +60,22 @@ async def _differences(session: AsyncSession, snapshot: Snapshot) -> list[Differ
             for d in differences(point(previous), point(snapshot))]
 
 
-async def _entry(session: AsyncSession, snapshot: Snapshot, name: str) -> SnapshotEntryRead:
+async def _entry(session: AsyncSession, snapshot: Snapshot, name: str, source: InstanceSource) -> SnapshotEntryRead:
     return SnapshotEntryRead(
-        id=snapshot.id, instance=name, model=snapshot.model, kind=snapshot.kind, happened_at=snapshot.happened_at,
+        id=snapshot.id, instance=name, source=source, model=snapshot.model, kind=snapshot.kind, happened_at=snapshot.happened_at,
         noticed_at=snapshot.noticed_at, last_seen=snapshot.last_seen,
         container_id=snapshot.container_id[:12] if snapshot.container_id else None,
         differences=await _differences(session, snapshot))
 
 
-async def list_snapshots(session: AsyncSession, server_id: int, name: str | None, limit: int,
-                         before: str | None) -> SnapshotPageRead:
-    """A server's or one instance's change list, newest first by when things happened."""
-    query = select(Snapshot, Instance.name).join(Instance).where(Snapshot.server_id == server_id)
+async def list_snapshots(session: AsyncSession, server_id: int, name: str | None, source: InstanceSource | None,
+                         limit: int, before: str | None) -> SnapshotPageRead:
+    """A server's or one instance's (`name` and `source`) change list, newest first by when things happened."""
+    query = select(Snapshot, Instance.name, Instance.source).join(Instance).where(Snapshot.server_id == server_id)
     if name is not None:
         query = query.where(Instance.name == name)
+    if source is not None:
+        query = query.where(Instance.source == source)
     if before is not None:
         at, snapshot_id = parse_cursor(before)
         query = query.where(or_(Snapshot.happened_at < at, and_(Snapshot.happened_at == at, Snapshot.id < snapshot_id)))
@@ -81,20 +83,20 @@ async def list_snapshots(session: AsyncSession, server_id: int, name: str | None
         query.order_by(Snapshot.happened_at.desc(), Snapshot.id.desc()).limit(limit + 1))).all()
     page = rows[:limit]
     return SnapshotPageRead(
-        entries=[await _entry(session, snapshot, instance) for snapshot, instance in page],
+        entries=[await _entry(session, snapshot, instance, instance_source) for snapshot, instance, instance_source in page],
         next_before=_cursor(page[-1][0]) if len(rows) > limit else None)
 
 
-async def _get(session: AsyncSession, server_id: int, snapshot_id: int) -> tuple[Snapshot, str]:
-    row = (await session.execute(select(Snapshot, Instance.name).join(Instance).where(
+async def _get(session: AsyncSession, server_id: int, snapshot_id: int) -> tuple[Snapshot, str, InstanceSource]:
+    row = (await session.execute(select(Snapshot, Instance.name, Instance.source).join(Instance).where(
         Snapshot.id == snapshot_id, Snapshot.server_id == server_id))).first()
     if row is None:
         raise NotFound
-    return row[0], row[1]
+    return row[0], row[1], row[2]
 
 
-async def _detail(session: AsyncSession, snapshot: Snapshot, name: str) -> SnapshotDetailRead:
-    entry = await _entry(session, snapshot, name)
+async def _detail(session: AsyncSession, snapshot: Snapshot, name: str, source: InstanceSource) -> SnapshotDetailRead:
+    entry = await _entry(session, snapshot, name, source)
     config = config_from_json(snapshot.config) if snapshot.config is not None else None
     return SnapshotDetailRead(
         **entry.model_dump(),
@@ -108,14 +110,14 @@ async def _detail(session: AsyncSession, snapshot: Snapshot, name: str) -> Snaps
 
 
 async def get_snapshot(session: AsyncSession, server_id: int, snapshot_id: int) -> SnapshotDetailRead:
-    snapshot, name = await _get(session, server_id, snapshot_id)
-    return await _detail(session, snapshot, name)
+    snapshot, name, source = await _get(session, server_id, snapshot_id)
+    return await _detail(session, snapshot, name, source)
 
 
 async def compare_snapshots(session: AsyncSession, server_id: int, first: int, second: int) -> SnapshotCompareRead:
     """Any two of a server's snapshots, the older as "from". Removed entries have no config to compare."""
     pair = [await _get(session, server_id, snapshot_id) for snapshot_id in (first, second)]
-    if any(snapshot.kind is SnapshotKind.REMOVED for snapshot, _ in pair):
+    if any(snapshot.kind is SnapshotKind.REMOVED for snapshot, _, _ in pair):
         raise NotFound
     older, newer = sorted(pair, key=lambda row: (row[0].happened_at, row[0].id))
     return SnapshotCompareRead(
@@ -126,7 +128,7 @@ async def compare_snapshots(session: AsyncSession, server_id: int, first: int, s
 
 async def check_snapshot_key(session: AsyncSession, server_id: int, snapshot_id: int, key: str) -> CheckKeyRead:
     """Never logs or keeps the candidate key."""
-    snapshot, _ = await _get(session, server_id, snapshot_id)
+    snapshot, _, _ = await _get(session, server_id, snapshot_id)
     if snapshot.key_fingerprint is None or snapshot.key_id is None:
         raise NotFound
     matches = check_key(key, snapshot.key_fingerprint, snapshot.key_id)

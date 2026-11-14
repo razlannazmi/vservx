@@ -13,7 +13,7 @@ import asyncssh
 
 from api.config import Settings
 from api.db.base import utcnow
-from api.enums import ConnectionFailure, DockerStatus, InstanceState, ServerKind, WatchState
+from api.enums import ConnectionFailure, DockerStatus, InstanceSource, InstanceState, ServerKind, WatchState
 from api.schemas.watch import (
     GpuRead,
     RemovedInstanceRead,
@@ -41,7 +41,15 @@ from api.watch.docker import (
     run_docker,
     target,
 )
-from api.watch.frameworks import Container, Framework, HttpResponse, InstanceInfo, InstanceSpec, framework_for
+from api.watch.frameworks import (
+    Container,
+    Framework,
+    HttpResponse,
+    InstanceInfo,
+    InstanceSpec,
+    framework_for,
+    instance_key,
+)
 from api.watch.gpus import GPU_COMMAND, Gpu, gpu_users, parse_gpus
 from api.watch.shell import CantReachPort, CommandResult, PortClosed, ServerShell, Shell
 from api.watch.states import Probe, instance_state
@@ -104,7 +112,7 @@ def usage_read(point: UsagePoint) -> UsagePointRead:
 class ServerWatch:
     def __init__(self, config: WatchConfig, settings: Settings, limiter: asyncio.Semaphore,
                  histories: dict[str, UsageHistory], recorder: SnapshotRecorder | None = None) -> None:
-        """`histories` (container name -> history) belongs to the caller, so it outlives this
+        """`histories` (instance_key -> history) belongs to the caller, so it outlives this
         watch when the server's settings change and a new one takes over. `recorder` writes launch
         snapshots; without one, none are taken."""
         self.config = config
@@ -265,22 +273,24 @@ class ServerWatch:
             framework = frameworks.get(container.name)
             if framework is None:
                 continue
-            found.add(container.name)
-            known = self._instances.get(container.name)
+            key = instance_key(container.source, container.name)
+            found.add(key)
+            known = self._instances.get(key)
             if known is None or known.container.started_at != container.started_at:
                 # New, or restarted: it has to become healthy again, and its version may have changed.
-                self._instances[container.name] = _Instance(
+                self._instances[key] = _Instance(
                     container, framework, framework.describe(container), instance_state(container, None, False))
                 continue
             known.container, known.spec = container, framework.describe(container)
             if container.status != "running":
                 known.state, known.message = instance_state(container, None, known.ever_ready), None
-        for name in list(self._instances):
-            if name not in found:
-                del self._instances[name]
-                self._histories.pop(name, None)
+        for key in list(self._instances):
+            if key not in found:
+                del self._instances[key]
+                self._histories.pop(key, None)
         self._found_at = utcnow()
-        await self._record(shell, [container for container in containers if container.name in found])
+        await self._record(shell, [container for container in containers
+                                   if instance_key(container.source, container.name) in found])
 
     async def _inspect(self, shell: ServerShell, names: list[str]) -> CommandResult:
         """docker inspect, falling back for good to env names only when Docker can't run the filter."""
@@ -332,19 +342,20 @@ class ServerWatch:
             return  # tried again at the next discovery
         seen = []
         for container in containers:
-            spec = self._instances[container.name].spec
+            spec = self._instances[instance_key(container.source, container.name)].spec
             key_fingerprint, key_id = fingerprint(spec.api_key) if spec.api_key else (None, None)
             seen.append(Seen(
                 name=container.name, container_id=container.id, created_at=container.created_at,
                 started_at=container.started_at, restart_count=container.restart_count, image_id=container.image_id,
                 model=spec.model, config=launch_config(container, self._image_defaults.get(container.image_id)),
-                key_fingerprint=key_fingerprint, key_id=key_id,
+                key_fingerprint=key_fingerprint, key_id=key_id, source=container.source,
             ))
-        signature = {s.name: (s.container_id, s.config, s.key_fingerprint) for s in seen}
+        signature = {instance_key(s.source, s.name): (s.container_id, s.config, s.key_fingerprint) for s in seen}
         if signature == self._recorded:
             return
         try:
-            recorded = await self._recorder.record(self.config.server_id, seen, utcnow())
+            recorded = await self._recorder.record(self.config.server_id, seen, utcnow(),
+                                                   frozenset({InstanceSource.DOCKER}))
         except Exception:
             if not self._record_failing:
                 logger.exception("Server %s: couldn't save launch snapshots; trying again at the next discovery",
@@ -358,8 +369,8 @@ class ServerWatch:
         if self._recorder is None or instance.info is None or not instance.info.version:
             return
         try:
-            await self._recorder.fill_version(self.config.server_id, instance.container.name, instance.container.id,
-                                              instance.info.version)
+            await self._recorder.fill_version(self.config.server_id, instance.container.source,
+                                              instance.container.name, instance.container.id, instance.info.version)
         except Exception:
             logger.exception("Server %s: couldn't save instance %s's vLLM version", self.config.server_id,
                              instance.container.name)
@@ -385,7 +396,7 @@ class ServerWatch:
             raise failed.exceptions[0] from None
 
     async def _probe(self, shell: ServerShell, instance: _Instance) -> None:
-        host, port = target(instance.container, instance.spec.port)
+        host, port = target(instance.container, instance.spec.port, instance.spec.host)
 
         async def get(path: str, headers: dict[str, str]) -> HttpResponse:
             return await shell.http_get(host, port, path, headers)
@@ -413,7 +424,7 @@ class ServerWatch:
                     await self._fill_version(instance)
                 metrics = await get(instance.framework.metrics_path, {})
                 if metrics.status == 200:
-                    history = self._histories.setdefault(instance.container.name, UsageHistory(self._history_length))
+                    history = self._histories.setdefault(self._key(instance), UsageHistory(self._history_length))
                     history.add(instance.framework.read_metrics(metrics.body), utcnow())
                 else:
                     problem = f"GET {instance.framework.metrics_path} answered {metrics.status}"
@@ -428,6 +439,10 @@ class ServerWatch:
         if was_ready and instance.state is not InstanceState.READY:
             # It may have stopped: see what Docker says at the next round, not in a minute.
             self._discovery_due = True
+
+    @staticmethod
+    def _key(instance: _Instance) -> str:
+        return instance_key(instance.container.source, instance.container.name)
 
     def _log_problem(self, instance: _Instance, problem: str | None) -> None:
         """Say what went wrong reading an instance, once each time that changes, so a log isn't
@@ -462,10 +477,12 @@ class ServerWatch:
 
     def _instance_read(self, instance: _Instance) -> WatchedInstanceRead:
         container, spec, info = instance.container, instance.spec, instance.info
-        history = self._histories.get(container.name)
+        key = self._key(instance)
+        history = self._histories.get(key)
         latest = history.latest if history else None
         return WatchedInstanceRead(
             name=container.name,
+            source=container.source,
             framework=instance.framework.name,
             state=instance.state,
             message=instance.message,
@@ -482,7 +499,7 @@ class ServerWatch:
             restart_count=container.restart_count,
             usage=usage_read(latest) if latest and instance.state is InstanceState.READY else None,
             running_trend=[point.running for point in history.points] if history else [],
-            changed_at=self._changed_at.get(container.name),
+            changed_at=self._changed_at.get(key),
         )
 
     def view(self) -> ServerWatchRead:
@@ -495,7 +512,8 @@ class ServerWatch:
                             temperature_c=gpu.temperature, instances=users.get(gpu.index, []))
                     for gpu in self._gpus]
         since = utcnow() - timedelta(days=REMOVED_ROW_DAYS)
-        removed = [row for row in self._removed if row.removed_at >= since and row.name not in self._instances]
+        removed = [row for row in self._removed
+                   if row.removed_at >= since and instance_key(row.source, row.name) not in self._instances]
         return ServerWatchRead(
             server_id=self.config.server_id, state=self._state, since=self._since, message=self._message,
             docker=self._docker.status, docker_message=self._docker.message,

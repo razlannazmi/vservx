@@ -91,6 +91,7 @@ class VLLM:
             model=flags.get("--served-model-name") or flags.get("--model") or _served_model(words),
             max_model_len=_int(flags.get("--max-model-len")),
             api_key=flags.get("--api-key") or container.env.get("VLLM_API_KEY"),
+            host=flags.get("--host") or None,
         )
 
     async def read_info(self, get: Get, spec: InstanceSpec) -> InstanceInfo:

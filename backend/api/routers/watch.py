@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from api.auth import WorkspaceAccessDep, workspace_access
 from api.db.deps import SessionDep
+from api.enums import InstanceSource
 from api.models import Server
 from api.routers.servers import get_server_or_404
 from api.schemas.watch import InstanceHistoryRead, ServerWatchRead, WatchSummaryRead
@@ -40,9 +41,10 @@ async def get_server_watch(server_id: int, access: WorkspaceAccessDep, session: 
 
 @router.get("/servers/{server_id}/instances/{name}/history", response_model=InstanceHistoryRead)
 async def get_instance_history(server_id: int, name: str, access: WorkspaceAccessDep, session: SessionDep,
-                               watcher: WatcherDep) -> InstanceHistoryRead:
+                               watcher: WatcherDep,
+                               source: InstanceSource = InstanceSource.DOCKER) -> InstanceHistoryRead:
     await get_server_or_404(session, access, server_id)
-    history = watcher.history(server_id, name)
+    history = watcher.history(server_id, source, name)
     if history is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found")
     return history

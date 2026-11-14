@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from api.enums import SnapshotKind
+from api.enums import InstanceSource, SnapshotKind
 
 # Defaults would otherwise mark fields optional in the OpenAPI response schema.
 _READ = ConfigDict(json_schema_serialization_defaults_required=True)
@@ -24,8 +24,9 @@ class SnapshotEntryRead(BaseModel):
     model_config = _READ
 
     id: int
-    # The container name.
+    # The container or unit name.
     instance: str
+    source: InstanceSource
     # The model it served, from its launch arguments.
     model: str | None
     kind: SnapshotKind

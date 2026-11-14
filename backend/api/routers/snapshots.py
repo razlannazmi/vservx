@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from api.auth import CurrentUserDep, WorkspaceAccessDep, workspace_access
 from api.auth.limits import KeyCheckLimitsDep
 from api.db.deps import SessionDep
+from api.enums import InstanceSource
 from api.models import Server, User
 from api.routers.servers import get_server_or_404
 from api.schemas.snapshot import (
@@ -38,9 +39,10 @@ async def _visible_server(session: SessionDep, access: WorkspaceAccessDep, user:
     return server
 
 
-async def _page(session: SessionDep, server_id: int, name: str | None, limit: int, before: str | None) -> SnapshotPageRead:
+async def _page(session: SessionDep, server_id: int, name: str | None, source: InstanceSource | None, limit: int,
+                 before: str | None) -> SnapshotPageRead:
     try:
-        return await service.list_snapshots(session, server_id, name, limit, before)
+        return await service.list_snapshots(session, server_id, name, source, limit, before)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="Bad `before` cursor") from None
 
@@ -50,14 +52,15 @@ async def list_server_snapshots(server_id: int, user: CurrentUserDep, access: Wo
                                 session: SessionDep, limit: Limit = service.PAGE_SIZE, before: str | None = None) -> SnapshotPageRead:
     """Every instance's changes and removals on the server, newest first."""
     await _visible_server(session, access, user, server_id)
-    return await _page(session, server_id, None, limit, before)
+    return await _page(session, server_id, None, None, limit, before)
 
 
 @router.get("/instances/{name}/snapshots", response_model=SnapshotPageRead)
 async def list_instance_snapshots(server_id: int, name: str, user: CurrentUserDep, access: WorkspaceAccessDep,
-                                  session: SessionDep, limit: Limit = service.PAGE_SIZE, before: str | None = None) -> SnapshotPageRead:
+                                  session: SessionDep, source: InstanceSource = InstanceSource.DOCKER,
+                                  limit: Limit = service.PAGE_SIZE, before: str | None = None) -> SnapshotPageRead:
     await _visible_server(session, access, user, server_id)
-    return await _page(session, server_id, name, limit, before)
+    return await _page(session, server_id, name, source, limit, before)
 
 
 # Declared before /snapshots/{snapshot_id}, which would otherwise take "compare" as an ID.

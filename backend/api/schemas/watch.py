@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict
 
-from api.enums import DockerStatus, InstanceState, WatchState
+from api.enums import DockerStatus, InstanceSource, InstanceState, WatchState
 
 # Defaults would otherwise mark fields optional in the OpenAPI response schema.
 _READ = ConfigDict(json_schema_serialization_defaults_required=True)
@@ -26,8 +26,9 @@ class UsagePointRead(BaseModel):
 class WatchedInstanceRead(BaseModel):
     model_config = _READ
 
-    # The container's name: an instance's identity on its server.
+    # The container's or unit's name; with its source, an instance's identity on its server.
     name: str
+    source: InstanceSource
     framework: str
     state: InstanceState
     message: str | None
@@ -56,6 +57,7 @@ class RemovedInstanceRead(BaseModel):
     model_config = _READ
 
     name: str
+    source: InstanceSource
     image: str | None
     model: str | None
     last_seen: datetime

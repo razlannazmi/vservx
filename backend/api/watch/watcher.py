@@ -10,13 +10,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from api.config import Settings
-from api.enums import AuthType, DockerStatus, ServerKind, UserRole, WatchState, WorkspaceRole
+from api.enums import AuthType, DockerStatus, InstanceSource, ServerKind, UserRole, WatchState, WorkspaceRole
 from api.models import SavedKey, Server, User, WorkspaceMember
 from api.schemas.watch import InstanceHistoryRead, ServerWatchRead, WatchSummaryRead
 from api.service.connections import build_hops
 from api.service.servers import MAX_JUMP_HOSTS
 from api.snapshots.recorder import SnapshotRecorder
 from api.watch import local
+from api.watch.frameworks import instance_key
 from api.watch.server import ServerWatch, WatchConfig, usage_read
 from api.watch.usage import UsageHistory
 
@@ -71,7 +72,7 @@ class Watcher:
         self._recorder = SnapshotRecorder(sessionmaker)
         self._limiter = asyncio.Semaphore(settings.watch_concurrency)
         self._entries: dict[int, _Entry] = {}
-        # Server id -> container name -> history. Kept when a server's watch is replaced.
+        # Server id -> instance_key -> history. Kept when a server's watch is replaced.
         self._histories: dict[int, dict[str, UsageHistory]] = {}
         self._wake = asyncio.Event()
         self._task: asyncio.Task[None] | None = None
@@ -204,15 +205,15 @@ class Watcher:
             instances=[], gpus=None, gpu_message=None, usage_interval_seconds=self._settings.usage_interval_seconds,
         )
 
-    def history(self, server_id: int, name: str) -> InstanceHistoryRead | None:
+    def history(self, server_id: int, source: InstanceSource, name: str) -> InstanceHistoryRead | None:
         """None for an instance the server doesn't have; an instance not yet read, or removed in
         the last 7 days, has no points."""
         view = self.view(server_id)
-        if name in {row.name for row in view.removed}:
+        if (source, name) in {(row.source, row.name) for row in view.removed}:
             return InstanceHistoryRead(name=name, interval_seconds=self._settings.usage_interval_seconds, points=[])
-        if name not in {instance.name for instance in view.instances}:
+        if (source, name) not in {(instance.source, instance.name) for instance in view.instances}:
             return None
-        history = self._histories.get(server_id, {}).get(name)
+        history = self._histories.get(server_id, {}).get(instance_key(source, name))
         points = [usage_read(point) for point in history.points] if history else []
         return InstanceHistoryRead(name=name, interval_seconds=self._settings.usage_interval_seconds, points=points)
 
