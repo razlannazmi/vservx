@@ -8,11 +8,12 @@ from datetime import datetime, timedelta
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from api.enums import SnapshotKind
+from api.enums import InstanceSource, SnapshotKind
 from api.models import Instance, Snapshot
 from api.schemas.watch import RemovedInstanceRead
-from api.snapshots.config import LaunchConfig, config_from_json, config_to_json
+from api.snapshots.config import Config, UnitConfig, config_from_json, config_to_json
 from api.snapshots.diff import Point, same_launch
+from api.watch.frameworks import instance_key
 
 # A removed container stays in the Instances table this long.
 REMOVED_ROW_DAYS = 7
@@ -30,14 +31,15 @@ class Seen:
     restart_count: int
     image_id: str
     model: str | None
-    config: LaunchConfig
+    config: Config
     key_fingerprint: str | None
     key_id: str | None
+    source: InstanceSource = InstanceSource.DOCKER
 
 
 @dataclass(frozen=True)
 class Recorded:
-    # Name -> happened_at of its newest snapshot, when that's a recreation or a change.
+    # instance_key -> happened_at of its newest snapshot, when that's a recreation or a change.
     changed_at: dict[str, datetime]
     # Removed in the last REMOVED_ROW_DAYS days, newest first.
     removed: list[RemovedInstanceRead]
@@ -45,7 +47,8 @@ class Recorded:
 
 def point(snapshot: Snapshot) -> Point:
     config = config_from_json(snapshot.config) if snapshot.config is not None else None
-    return Point(snapshot.container_id, snapshot.image_id, config, snapshot.key_fingerprint, snapshot.key_id)
+    return Point(snapshot.container_id, snapshot.image_id, config, snapshot.key_fingerprint, snapshot.key_id,
+                 snapshot.vllm_version)
 
 
 async def _newest(session: AsyncSession, server_id: int, live_only: bool) -> dict[int, Snapshot]:
@@ -61,25 +64,30 @@ class SnapshotRecorder:
     def __init__(self, sessionmaker: async_sessionmaker[AsyncSession]) -> None:
         self._sessionmaker = sessionmaker
 
-    async def record(self, server_id: int, seen: list[Seen], now: datetime) -> Recorded:
+    async def record(self, server_id: int, seen: list[Seen], now: datetime,
+                     read: frozenset[InstanceSource]) -> Recorded:
+        """`read` is the sources this discovery actually read: an instance of any other source may
+        just not have been looked at, so it's never marked removed."""
         async with self._sessionmaker() as session:
-            instances = {instance.name: instance for instance in
+            instances = {instance_key(instance.source, instance.name): instance for instance in
                          await session.scalars(select(Instance).where(Instance.server_id == server_id))}
             latest = await _newest(session, server_id, live_only=True)
             for found in seen:
-                instance = instances.get(found.name)
+                key = instance_key(found.source, found.name)
+                instance = instances.get(key)
                 if instance is None:
-                    instance = Instance(server_id=server_id, name=found.name, container_id=found.container_id,
-                                        model=found.model, first_seen=now, last_seen=now)
+                    instance = Instance(server_id=server_id, source=found.source, name=found.name,
+                                        container_id=found.container_id, model=found.model, first_seen=now,
+                                        last_seen=now)
                     session.add(instance)
                     await session.flush()
-                    instances[found.name] = instance
+                    instances[key] = instance
                 instance.last_seen, instance.container_id, instance.model = now, found.container_id, found.model
                 instance.removed_at = None
                 self._compare(session, server_id, instance, latest.get(instance.id), found, now)
-            names = {found.name for found in seen}
-            for instance in instances.values():
-                if instance.removed_at is None and instance.name not in names:
+            keys = {instance_key(found.source, found.name) for found in seen}
+            for key, instance in instances.items():
+                if instance.removed_at is None and instance.source in read and key not in keys:
                     instance.removed_at = now
                     session.add(Snapshot(server_id=server_id, instance_id=instance.id, kind=SnapshotKind.REMOVED,
                                          happened_at=now, noticed_at=now, container_id=instance.container_id,
@@ -96,6 +104,10 @@ class SnapshotRecorder:
             kind, happened = SnapshotKind.FIRST_SEEN, found.created_at or now
         else:
             old = point(last)
+            if isinstance(found.config, UnitConfig) and not isinstance(old.config, UnitConfig):
+                # Written before units had their own config: fill it in; that's no change.
+                last.config = config_to_json(found.config)
+                return
             same = same_launch(old, new)
             if last.container_id == found.container_id:
                 if same:
@@ -119,25 +131,53 @@ class SnapshotRecorder:
                         now: datetime) -> Recorded:
         by_id = {instance.id: instance for instance in instances.values()}
         newest = await _newest(session, server_id, live_only=False)
-        changed_at = {by_id[instance_id].name: snapshot.happened_at for instance_id, snapshot in newest.items()
-                      if snapshot.kind in _CHANGES}
+        changed_at = {instance_key(by_id[instance_id].source, by_id[instance_id].name): snapshot.happened_at
+                      for instance_id, snapshot in newest.items() if snapshot.kind in _CHANGES}
         live = await _newest(session, server_id, live_only=True)
         since = now - timedelta(days=REMOVED_ROW_DAYS)
         removed = sorted((instance for instance in instances.values()
                           if instance.removed_at is not None and instance.removed_at >= since),
                          key=lambda instance: instance.removed_at, reverse=True)
         return Recorded(changed_at, [
-            RemovedInstanceRead(name=instance.name,
+            RemovedInstanceRead(name=instance.name, source=instance.source,
                                 image=(live[instance.id].config or {}).get("image") if instance.id in live else None,
                                 model=instance.model, last_seen=instance.last_seen, removed_at=instance.removed_at)
             for instance in removed])
 
-    async def fill_version(self, server_id: int, name: str, container_id: str, version: str) -> None:
-        """The vLLM version, read once the instance is ready, into the snapshots of that container."""
+    async def known_systemd(self, server_id: int) -> set[str]:
+        """The instance_keys of the server's systemd instances, both scopes, that aren't removed."""
         async with self._sessionmaker() as session:
-            instance_id = select(Instance.id).where(Instance.server_id == server_id, Instance.name == name)
-            await session.execute(update(Snapshot).where(
-                Snapshot.instance_id.in_(instance_id), Snapshot.container_id == container_id,
-                Snapshot.kind != SnapshotKind.REMOVED, Snapshot.vllm_version.is_(None),
-            ).values(vllm_version=version))
+            rows = await session.scalars(select(Instance).where(
+                Instance.server_id == server_id, Instance.source != InstanceSource.DOCKER,
+                Instance.removed_at.is_(None)))
+            return {instance_key(instance.source, instance.name) for instance in rows}
+
+    async def record_version(self, server_id: int, source: InstanceSource, name: str, container_id: str,
+                             version: str, now: datetime) -> None:
+        """The vLLM version, read once the instance is ready. Docker: into the snapshots of that
+        container. A unit: into its latest snapshot when that has none; when it differs, a "changed"
+        snapshot with the same unit text, since an upgrade is a restart of an unchanged unit."""
+        async with self._sessionmaker() as session:
+            instance_id = select(Instance.id).where(Instance.server_id == server_id, Instance.source == source,
+                                                    Instance.name == name)
+            if source is InstanceSource.DOCKER:
+                await session.execute(update(Snapshot).where(
+                    Snapshot.instance_id.in_(instance_id), Snapshot.container_id == container_id,
+                    Snapshot.kind != SnapshotKind.REMOVED, Snapshot.vllm_version.is_(None),
+                ).values(vllm_version=version))
+            else:
+                last = await session.scalar(select(Snapshot).where(
+                    Snapshot.instance_id.in_(instance_id), Snapshot.kind != SnapshotKind.REMOVED,
+                ).order_by(Snapshot.id.desc()).limit(1))
+                if last is None or last.vllm_version == version:
+                    return
+                if last.vllm_version is None:
+                    last.vllm_version = version
+                else:
+                    session.add(Snapshot(
+                        server_id=server_id, instance_id=last.instance_id, kind=SnapshotKind.CHANGED,
+                        happened_at=now, noticed_at=now, container_id=last.container_id, created_at=last.created_at,
+                        started_at=last.started_at, restart_count=last.restart_count, image_id=last.image_id,
+                        vllm_version=version, model=last.model, config=last.config,
+                        key_fingerprint=last.key_fingerprint, key_id=last.key_id))
             await session.commit()

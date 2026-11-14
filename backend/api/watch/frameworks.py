@@ -10,6 +10,8 @@ from datetime import datetime
 from functools import cache
 from typing import Any, Protocol
 
+from api.enums import InstanceSource
+
 
 @dataclass(frozen=True)
 class RawLaunch:
@@ -64,6 +66,7 @@ class Container:
     image_id: str = ""
     # The launch settings snapshots are made from; None when Docker didn't send them.
     launch: RawLaunch | None = field(default=None, repr=False)
+    source: InstanceSource = InstanceSource.DOCKER
 
 
 @dataclass(frozen=True)
@@ -74,6 +77,8 @@ class InstanceSpec:
     model: str | None
     max_model_len: int | None
     api_key: str | None = field(repr=False)
+    # The address --host binds; None when it isn't given.
+    host: str | None = None
 
 
 @dataclass(frozen=True)
@@ -104,6 +109,11 @@ class MetricSample:
 class HttpResponse:
     status: int
     body: str
+
+
+def instance_key(source: InstanceSource, name: str) -> str:
+    """An instance's identity on its server, for in-memory dicts. Docker names can't hold ":", so no key collides."""
+    return name if source is InstanceSource.DOCKER else f"{source}:{name}"
 
 
 # GET a path on the instance with these headers.

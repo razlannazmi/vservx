@@ -3,9 +3,10 @@ from collections.abc import Iterable
 from sqlalchemy import case, delete, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.enums import WorkspaceRole
+from api.enums import UserRole, WorkspaceRole
 from api.models import SavedKey, Server, User, Workspace, WorkspaceMember
 from api.schemas import AccountSummary, AdminWorkspaceRead, MemberRead, WorkspaceRead
+from api.service.servers import has_this_machine
 
 # Most accounts one search returns; the owner narrows the search rather than scrolling.
 SEARCH_LIMIT = 20
@@ -135,6 +136,13 @@ async def change_owner(session: AsyncSession, workspace: Workspace, user_id: int
         await account_that_can_join(session, user_id)
     elif target.role is WorkspaceRole.OWNER:
         return
+
+    # This machine's host belongs to an app admin, so only an admin may own a workspace holding it.
+    if await has_this_machine(session, workspace.id):
+        new_owner = await session.get(User, user_id)
+        if new_owner is None or new_owner.role is not UserRole.ADMIN or not new_owner.is_active or new_owner.is_pending:
+            raise ValueError("This workspace has this machine in it, so only an app admin can own it. "
+                             "Remove this machine first, or pick an admin.")
 
     # Demote first and flush, so the one-owner index never sees two owners.
     await session.execute(

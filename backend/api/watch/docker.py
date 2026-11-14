@@ -316,10 +316,11 @@ def parse_inspect(stdout: str, env_values_hidden: bool = False) -> list[Containe
     return containers
 
 
-def target(container: Container, port: int) -> tuple[str, int]:
-    """Where the server itself reaches the container's port."""
+def target(container: Container, port: int, bind_host: str | None = None) -> tuple[str, int]:
+    """Where the server itself reaches the container's port. With host networking, `bind_host` is
+    the address the instance was told to bind, when that's a specific one."""
     if container.network_mode == "host":
-        return ("127.0.0.1", port)
+        return ("127.0.0.1" if bind_host in (None, "", "0.0.0.0", "::") else bind_host, port)
     if binding := container.published.get(port):
         host, host_port = binding
         return ("127.0.0.1" if host in ("", "0.0.0.0", "::") else host, host_port)

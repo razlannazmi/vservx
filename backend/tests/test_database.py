@@ -74,7 +74,7 @@ def test_unrecognised_databases_are_not_upgraded(data_dir: Path) -> None:
     with pytest.raises(migrate.UpgradeError, match="newer version"):
         migrate.upgrade_database(db_path, by="Admin", user_id=None, source="cli")
 
-    # Made by create_all before migrations existed: no alembic_version table.
+    # A database made by create_all: tables, but no alembic_version table.
     old = data_dir / "old.db"
     engine = create_engine(f"sqlite:///{old.as_posix()}")
     Base.metadata.create_all(engine)

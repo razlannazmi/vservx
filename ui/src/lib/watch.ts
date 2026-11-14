@@ -3,6 +3,7 @@
 import type {
   DockerStatus,
   GpuRead,
+  InstanceSource,
   InstanceState,
   RemovedInstanceRead,
   ServerRead,
@@ -15,6 +16,20 @@ import { serverStatus, type Tone } from "$lib/servers";
 /** One line of a server's instance list: a container that's there, or one removed in the last 7 days. */
 export type InstanceRow = { removed: false; instance: WatchedInstanceRead } | { removed: true; instance: RemovedInstanceRead };
 
+/** An instance is its source and its name within the server: a system and a --user vllm.service are two. */
+export type InstanceRef = { source: InstanceSource; name: string };
+
+const SOURCES: readonly string[] = ["docker", "systemd", "systemd-user"] satisfies InstanceSource[];
+
+export function isInstanceSource(text: string): text is InstanceSource {
+  return SOURCES.includes(text);
+}
+
+/** "systemd-user:vllm.service": one string per instance, for keys and comparisons. */
+export function instanceKey(instance: InstanceRef): string {
+  return `${instance.source}:${instance.name}`;
+}
+
 /** When a removed container went, as its row and card say it: "7 Nov". */
 export function dayMonth(iso: string): string {
   return new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
@@ -25,6 +40,10 @@ export const WATCH_POLL_MS = 5_000;
 
 /** Minutes of usage the charts show; matches the backend's `history_minutes` default. */
 export const HISTORY_MINUTES = 30;
+
+/** The state label, and its detail, for this machine in a workspace no app admin owns. */
+export const NEEDS_ADMIN_OWNER = "Needs an admin owner";
+export const NEEDS_ADMIN_OWNER_DETAIL = "This machine is only watched while an app admin owns this workspace.";
 
 export const INSTANCE_WORDS: Record<InstanceState, string> = {
   ready: "Ready",
@@ -83,6 +102,8 @@ export function cardStatus(server: ServerRead, summary: WatchSummaryRead | undef
       return { tone: "none", label: "checking…" };
     case "host_key_changed":
       return { tone: "warn", label: "host key changed" };
+    case "needs_admin_owner":
+      return { tone: "warn", label: NEEDS_ADMIN_OWNER };
     case "sign_in_failed":
       return { tone: "bad", label: "sign-in failed" };
     case "unreachable":

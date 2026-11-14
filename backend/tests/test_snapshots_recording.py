@@ -10,7 +10,8 @@ from sqlalchemy import select
 
 from api.db.crypto import init_crypto
 from api.db.engine import create_engine, create_sessionmaker
-from api.models import Snapshot
+from api.enums import InstanceSource
+from api.models import Instance, Snapshot
 from api.snapshots.config import LaunchConfig
 from api.snapshots.recorder import Recorded, Seen, SnapshotRecorder
 from tests.helpers import SERVER_BODY, Db, FakeVLLM, Sshd, docker_host
@@ -24,28 +25,31 @@ class StubRecorder:
         self.calls: list[list[str]] = []
         self._fail = fail_first
 
-    async def record(self, server_id: int, seen: list[Seen], now: datetime) -> Recorded:
+    async def record(self, server_id: int, seen: list[Seen], now: datetime,
+                     read: frozenset[InstanceSource]) -> Recorded:
         self.calls.append([s.name for s in seen])
         if self._fail:
             self._fail = False
             raise OSError("database is locked")
         return Recorded({}, [])
 
-    async def fill_version(self, *args: object) -> None:
+    async def record_version(self, *args: object) -> None:
         pass
 
 
-def _seen(container_id: str = "c1", length: str = "8192", created: datetime = T0) -> Seen:
+def _seen(container_id: str = "c1", length: str = "8192", created: datetime = T0, name: str = "vllm-qwen",
+          source: InstanceSource = InstanceSource.DOCKER) -> Seen:
     config = LaunchConfig("vllm/vllm-openai:v0.7.1", args=("m", "--max-model-len", length))
-    return Seen("vllm-qwen", container_id, created, created, 0, "sha256:a", "m", config, None, None)
+    return Seen(name, container_id, created, created, 0, "sha256:a", "m", config, None, None, source)
 
 
-def _record(data_dir: Path, server_id: int, seen: list[Seen], now: datetime) -> Recorded:
+def _record(data_dir: Path, server_id: int, seen: list[Seen], now: datetime,
+            read: frozenset[InstanceSource] = frozenset({InstanceSource.DOCKER})) -> Recorded:
     """A fresh engine and recorder each call, as after a vservx restart."""
     async def main() -> Recorded:
         engine = create_engine(data_dir / "vservx.db")
         try:
-            return await SnapshotRecorder(create_sessionmaker(engine)).record(server_id, seen, now)
+            return await SnapshotRecorder(create_sessionmaker(engine)).record(server_id, seen, now, read)
         finally:
             await engine.dispose()
     return asyncio.run(main())
@@ -107,9 +111,10 @@ def test_watch_waits_for_image_settings(sshd: Sshd, fake_vllm: FakeVLLM, tmp_pat
     inspects_at_write: list[int] = []
 
     class Stub(StubRecorder):
-        async def record(self, server_id: int, seen: list[Seen], now: datetime) -> Recorded:
+        async def record(self, server_id: int, seen: list[Seen], now: datetime,
+                         read: frozenset[InstanceSource]) -> Recorded:
             inspects_at_write.append(answer.image_inspects)
-            return await super().record(server_id, seen, now)
+            return await super().record(server_id, seen, now, read)
 
     stub = Stub(fail_first=False)
     watch = _watch(host, recorder=stub)
@@ -120,3 +125,27 @@ def test_watch_waits_for_image_settings(sshd: Sshd, fake_vllm: FakeVLLM, tmp_pat
         task.cancel()
     asyncio.run(scenario())
     assert inspects_at_write[0] == 2
+
+
+def test_same_name_different_sources_are_separate_instances(api: TestClient, w: str, db: Db, data_dir: Path) -> None:
+    server_id = api.post(f"{w}/servers", json=SERVER_BODY).json()["id"]
+    both = frozenset({InstanceSource.DOCKER, InstanceSource.SYSTEMD})
+    result = _record(data_dir, server_id, [_seen(name="vllm.service"),
+                                           _seen("", name="vllm.service", source=InstanceSource.SYSTEMD)], T0, both)
+
+    async def read(session):
+        return sorted((i.source.value, i.name) for i in await session.scalars(select(Instance)))
+    assert db(read) == [("docker", "vllm.service"), ("systemd", "vllm.service")]
+    assert result.changed_at == {}
+
+
+def test_unread_source_is_not_marked_removed(api: TestClient, w: str, db: Db, data_dir: Path) -> None:
+    server_id = api.post(f"{w}/servers", json=SERVER_BODY).json()["id"]
+    both = frozenset({InstanceSource.DOCKER, InstanceSource.SYSTEMD})
+    _record(data_dir, server_id, [_seen("", name="vllm.service", source=InstanceSource.SYSTEMD)], T0, both)
+    result = _record(data_dir, server_id, [], T0 + timedelta(hours=1))  # only Docker was read
+
+    async def removed(session):
+        return [i.removed_at for i in await session.scalars(select(Instance))]
+    assert db(removed) == [None] and result.removed == []
+    assert [k for k, _ in _kinds(db)] == ["first_seen"]

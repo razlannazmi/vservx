@@ -1,7 +1,7 @@
 /** What a server's latest connection test means at a glance, and how vservx reaches it. */
 
 import type { components } from "$lib/api/schema";
-import type { ServerRead } from "$lib/api/client";
+import type { InstanceSource, ServerRead } from "$lib/api/client";
 import { relativeTime } from "$lib/format";
 
 export type Tone = "ok" | "bad" | "warn" | "none";
@@ -31,6 +31,18 @@ export const TONE_FLASH: Record<Tone, string> = {
   warn: "before:bg-status-warn/15",
   none: "before:bg-muted",
 };
+
+/** Where a server is: "This machine", or "user@host:port". */
+export function serverAddress(server: Pick<ServerRead, "kind" | "username" | "host" | "port">): string {
+  return server.kind === "this_machine" ? "This machine" : `${server.username}@${server.host}:${server.port}`;
+}
+
+/** Where an instance comes from: a container's image, or the systemd unit. */
+export function instanceOrigin(instance: { source: InstanceSource; name: string; image: string | null }): string {
+  if (instance.source === "systemd") return `systemd · ${instance.name}`;
+  if (instance.source === "systemd-user") return `systemd --user · ${instance.name}`;
+  return instance.image ?? "";
+}
 
 export function failureWords(failure: ConnectionFailure | null | undefined): string {
   return failure ? FAILURE_WORDS[failure] : "failed";

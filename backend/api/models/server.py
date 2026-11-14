@@ -6,7 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from api.db.base import Base, str_enum, utcnow
 from api.db.crypto import EncryptedString
-from api.enums import AuthType, ConnectionFailure
+from api.enums import AuthType, ConnectionFailure, ServerKind
 from api.ssh.keys import fingerprint_of
 
 if TYPE_CHECKING:
@@ -21,10 +21,14 @@ class Server(Base):
     # Deleting a workspace deletes its servers first (api.service.workspaces.delete_workspace).
     workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id", ondelete="RESTRICT"), index=True)
     name: Mapped[str] = mapped_column(String(255))
-    host: Mapped[str] = mapped_column(String(255))
+    kind: Mapped[ServerKind] = mapped_column(
+        str_enum(ServerKind), default=ServerKind.SSH, server_default=ServerKind.SSH.value
+    )
+    # host, username and auth_type are empty for the this-machine kind.
+    host: Mapped[str | None] = mapped_column(String(255))
     port: Mapped[int] = mapped_column(default=22)
-    username: Mapped[str] = mapped_column(String(255))
-    auth_type: Mapped[AuthType] = mapped_column(str_enum(AuthType))
+    username: Mapped[str | None] = mapped_column(String(255))
+    auth_type: Mapped[AuthType | None] = mapped_column(str_enum(AuthType))
     password: Mapped[str | None] = mapped_column(EncryptedString)
     # Used only to run `docker ps` / `docker inspect` through sudo. Without it, a password
     # server's sign-in password is used.
@@ -37,7 +41,7 @@ class Server(Base):
     jump_only: Mapped[bool] = mapped_column(default=False)
     # OpenSSH public key line recorded on the first successful login; only this key is accepted after.
     host_key: Mapped[str | None] = mapped_column(Text)
-    # When host_key was recorded; None for keys recorded before vservx kept the date.
+    # When host_key was recorded; None for a key stored without a recorded date.
     host_key_recorded_at: Mapped[datetime | None]
     # The latest connection test of this saved server (tests of unsaved settings aren't kept).
     last_test_at: Mapped[datetime | None]

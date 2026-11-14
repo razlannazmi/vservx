@@ -11,8 +11,10 @@ from api.enums import UserRole
 from api.models import AppSettings, User, Workspace
 from api.schemas import AdminWorkspaceRead, OwnerChange, UserUpdate
 from api.schemas.account import AccountRead, AccountUpdate, AppSettingsRead, AppSettingsUpdate
+from api.schemas.server import ThisMachineRead
 from api.service.users import apply_user_update, count_active_admins
 from api.service.workspaces import admin_workspace_read, change_owner, list_all_workspaces
+from api.watch import local
 
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
 
@@ -104,3 +106,10 @@ async def give_workspace_new_owner(workspace_id: int, data: OwnerChange, session
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=str(exc)) from None
     return await admin_workspace_read(session, workspace)
+
+
+@router.get("/this-machine", response_model=ThisMachineRead)
+async def get_this_machine() -> ThisMachineRead:
+    """Whether this machine can be added as a server, and what it calls itself."""
+    reason = local.unavailable_reason()
+    return ThisMachineRead(available=reason is None, reason=reason, hostname=local.machine_hostname())

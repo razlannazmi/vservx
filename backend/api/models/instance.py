@@ -4,7 +4,8 @@ from typing import TYPE_CHECKING
 from sqlalchemy import ForeignKey, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from api.db.base import Base
+from api.db.base import Base, str_enum
+from api.enums import InstanceSource
 
 if TYPE_CHECKING:
     from api.models.server import Server
@@ -16,10 +17,13 @@ class Instance(Base):
     the container is removed, so its snapshots stay."""
 
     __tablename__ = "instances"
-    __table_args__ = (UniqueConstraint("server_id", "name"),)
+    __table_args__ = (UniqueConstraint("server_id", "source", "name"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
     server_id: Mapped[int] = mapped_column(ForeignKey("servers.id", ondelete="CASCADE"), index=True)
+    source: Mapped[InstanceSource] = mapped_column(
+        str_enum(InstanceSource), default=InstanceSource.DOCKER, server_default=InstanceSource.DOCKER.value
+    )
     name: Mapped[str] = mapped_column(String(255))
     # The current, or last seen, container's full ID.
     container_id: Mapped[str] = mapped_column(String(64))

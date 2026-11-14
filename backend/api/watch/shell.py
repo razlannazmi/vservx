@@ -28,12 +28,27 @@ class CommandRunner(Protocol):
     async def run(self, command: str, stdin: str | None = None) -> CommandResult: ...
 
 
+class ServerShell(Protocol):
+    """What watching a server needs: run a command there, and GET from a port on it."""
+
+    async def run(self, command: str, stdin: str | None = None) -> CommandResult: ...
+
+    async def http_get(
+        self, host: str, port: int, path: str, headers: Mapping[str, str] | None = None
+    ) -> HttpResponse: ...
+
+
 class PortClosed(Exception):
     """Nothing is accepting connections on the instance's port."""
 
 
 class CantReachPort(Exception):
     """vservx has no way to reach the port; str(exc) is the message for people."""
+
+
+def url_host(host: str) -> str:
+    """The host as a URL or a Host header writes it: an IPv6 literal (vLLM's --host ::1) in brackets, once."""
+    return f"[{host}]" if ":" in host and not host.startswith("[") else host
 
 
 def _fields(head: bytes) -> dict[bytes, bytes]:
@@ -126,6 +141,39 @@ def _response(raw: bytes) -> HttpResponse:
     return HttpResponse(status, body.decode("utf-8", "replace"))
 
 
+async def exchange(
+    reader: asyncio.StreamReader, writer: asyncio.StreamWriter, host: str, port: int, path: str,
+    headers: Mapping[str, str], received: bytearray,
+) -> HttpResponse:
+    """Send a GET over an open connection and read the answer into `received` (so a caller that
+    times out can say what arrived). Closes the writer."""
+    try:
+        # The answer ends after Content-Length bytes, after its last chunk, or when the connection
+        # closes. Some servers (or what's between them and sshd) keep it open after a complete
+        # answer, so don't wait for the close once the answer says it's all in.
+        lines = [f"GET {path} HTTP/1.0", f"Host: {url_host(host)}:{port}", *(f"{k}: {v}" for k, v in headers.items()),
+                 "", ""]
+        writer.write("\r\n".join(lines).encode())
+        progress = _AnswerProgress()
+        while len(received) < MAX_BODY:
+            chunk = await reader.read(65536)
+            if not chunk:
+                break
+            received += chunk
+            if progress.complete(received):
+                break
+    finally:
+        writer.close()
+    return _response(bytes(received))
+
+
+def timeout_message(host: str, port: int, path: str, received: bytearray) -> str:
+    """Whether an answer arrived tells "never answered" from "answered, but never ended"."""
+    first = bytes(received).split(b"\r\n", 1)[0].decode("latin-1")
+    arrived = f"{len(received)} bytes arrived, starting {first!r}" if received else "nothing arrived"
+    return f"GET {path} on {host}:{port} didn't end within {HTTP_TIMEOUT:g} s; {arrived}"
+
+
 class Shell:
     def __init__(self, connection: asyncssh.SSHClientConnection, timeout: float) -> None:
         self._connection = connection
@@ -153,40 +201,22 @@ class Shell:
                     raise PortClosed(exc.reason) from None
                 self._forwarding = False
             except TimeoutError:
-                # Whether an answer arrived tells "never answered" from "answered, but never ended".
-                first = bytes(received).split(b"\r\n", 1)[0].decode("latin-1")
-                arrived = f"{len(received)} bytes arrived, starting {first!r}" if received else "nothing arrived"
-                raise TimeoutError(f"GET {path} on {host}:{port} didn't end within {HTTP_TIMEOUT:g} s; {arrived}") from None
+                raise TimeoutError(timeout_message(host, port, path, received)) from None
         return await self._curl_get(host, port, path, headers)
 
     async def _forwarded_get(
         self, host: str, port: int, path: str, headers: dict[str, str], received: bytearray
     ) -> HttpResponse:
         reader, writer = await self._connection.open_connection(host, port)
-        try:
-            # The answer ends after Content-Length bytes, after its last chunk, or when the connection
-            # closes. Some servers (or what's between them and sshd) keep it open after a complete
-            # answer, so don't wait for the close once the answer says it's all in.
-            lines = [f"GET {path} HTTP/1.0", f"Host: {host}:{port}", *(f"{k}: {v}" for k, v in headers.items()), "", ""]
-            writer.write("\r\n".join(lines).encode())
-            progress = _AnswerProgress()
-            while len(received) < MAX_BODY:
-                chunk = await reader.read(65536)
-                if not chunk:
-                    break
-                received += chunk
-                if progress.complete(received):
-                    break
-        finally:
-            writer.close()
-        return _response(bytes(received))
+        return await exchange(reader, writer, host, port, path, headers, received)
 
     async def _curl_get(self, host: str, port: int, path: str, headers: dict[str, str]) -> HttpResponse:
-        command = ["curl", "-sS", "--max-time", f"{HTTP_TIMEOUT:g}", "-o", "-", "-w", "\\n%{http_code}"]
+        # -g: no URL globbing, which takes an IPv6 host's [brackets] for a range.
+        command = ["curl", "-g", "-sS", "--max-time", f"{HTTP_TIMEOUT:g}", "-o", "-", "-w", "\\n%{http_code}"]
         # Headers (an API key) go on stdin, never on the command line where `ps` would show them.
         if headers:
             command += ["-H", "@-"]
-        command.append(f"http://{host}:{port}{path}")
+        command.append(f"http://{url_host(host)}:{port}{path}")
         stdin = "".join(f"{k}: {v}\n" for k, v in headers.items()) if headers else None
         result = await self.run(" ".join(map(shlex.quote, command)), stdin)
         if result.exit_status == 0:

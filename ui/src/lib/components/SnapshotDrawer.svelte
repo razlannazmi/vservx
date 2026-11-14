@@ -16,6 +16,7 @@
   import { localDateTime } from "$lib/format";
   import { duration, easeOut } from "$lib/motion";
   import type { DrawerState } from "$lib/snapshots";
+  import { instanceKey, type InstanceRef } from "$lib/watch";
 
   // Snapshots of a server's containers, over the right of the page without blocking it: the charts
   // keep updating, and another row's icon switches it. Its state lives in the address (ServerDetails).
@@ -31,7 +32,7 @@
     workspaceId: number;
     serverId: number;
     serverName: string;
-    pageInstance: string | null;
+    pageInstance: InstanceRef | null;
     drawer: DrawerState;
     onchange: (drawer: DrawerState) => void;
     onclose: () => void;
@@ -62,7 +63,7 @@
   // A removed instance's command is its last snapshot with a config.
   const lastLive = $derived(entries?.find((each) => each.kind !== "removed") ?? null);
   const detailId = $derived(showing === "instance" ? (drawer.at ?? lastLive?.id ?? null) : null);
-  const listKey = $derived(`${serverId}|${showing}|${showing === "instance" ? target : ""}`);
+  const listKey = $derived(`${serverId}|${showing}|${showing === "instance" && target ? instanceKey(target) : ""}`);
   const compareKey = $derived(drawer.compare ? drawer.compare.join(",") : "");
   const shown = $derived(
     comparison && swapped
@@ -110,7 +111,7 @@
     const result =
       showing === "instance" && target
         ? await api.GET("/api/workspaces/{workspace_id}/servers/{server_id}/instances/{name}/snapshots", {
-            params: { path: { ...path, name: target }, query: { before } },
+            params: { path: { ...path, name: target.name }, query: { before, source: target.source } },
           })
         : await api.GET("/api/workspaces/{workspace_id}/servers/{server_id}/snapshots", {
             params: { path, query: { before } },
@@ -177,8 +178,10 @@
   function open(entry: SnapshotEntryRead) {
     picking = false;
     picks = [];
-    const current = showing === "instance" && entry.instance === target && entry.id === lastLive?.id;
-    onchange({ view: "instance", instance: entry.instance, at: current ? null : entry.id, compare: null });
+    const opened = { source: entry.source, name: entry.instance };
+    const current =
+      showing === "instance" && target !== null && instanceKey(opened) === instanceKey(target) && entry.id === lastLive?.id;
+    onchange({ view: "instance", instance: opened, at: current ? null : entry.id, compare: null });
   }
 
   const tab = "rounded-[5px] px-2 py-1 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50";
@@ -202,7 +205,7 @@
   <header class="flex items-start justify-between gap-3 border-b px-4 py-3">
     <div class="min-w-0 space-y-2">
       <h2 id={titleId} class="truncate text-base font-semibold tracking-tight">
-        Snapshots · <span class={showing === "instance" ? "font-mono" : ""}>{showing === "instance" ? target : serverName}</span>
+        Snapshots · <span class={showing === "instance" ? "font-mono" : ""}>{showing === "instance" ? target?.name : serverName}</span>
       </h2>
       <div class="inline-flex rounded-md border p-0.5 text-xs" role="group" aria-label="Show snapshots of">
         <button

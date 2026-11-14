@@ -4,13 +4,14 @@
   import { api, type UsagePointRead, type WatchedInstanceRead } from "$lib/api/client";
   import UsageChart from "$lib/components/UsageChart.svelte";
   import { duration, easeOut } from "$lib/motion";
-  import { TONE_DOT } from "$lib/servers";
+  import { instanceOrigin, TONE_DOT } from "$lib/servers";
   import {
     formatNumber,
     formatSeconds,
     HISTORY_MINUTES,
     INSTANCE_TONE,
     INSTANCE_WORDS,
+    instanceKey,
     instanceReason,
     instanceSince,
   } from "$lib/watch";
@@ -26,12 +27,12 @@
   let cap = 90;
 
   const percent = (value: number) => `${formatNumber(value)}%`;
-  // Each poll brings a new `instance` object; only a different name means a different selection.
-  const name = $derived(instance.name);
+  // Each poll brings a new `instance` object; only a different source or name means a different selection.
+  const key = $derived(instanceKey(instance));
 
   // A new selection loads its history once...
   $effect(() => {
-    const selected = name;
+    const selected = key;
     untrack(() => void loadHistory(selected));
   });
 
@@ -45,12 +46,12 @@
     });
   });
 
-  async function loadHistory(name: string) {
+  async function loadHistory(selected: string) {
     points = [];
     const { data } = await api.GET("/api/workspaces/{workspace_id}/servers/{server_id}/instances/{name}/history", {
-      params: { path: { workspace_id: workspaceId, server_id: serverId, name } },
+      params: { path: { workspace_id: workspaceId, server_id: serverId, name: instance.name }, query: { source: instance.source } },
     });
-    if (!data || name !== instance.name) return;
+    if (!data || selected !== key) return;
     cap = Math.max(1, Math.round(HISTORY_SECONDS / data.interval_seconds));
     // Readings that arrived while the history was on its way are newer: keep them after it.
     const after = Date.parse(data.points.at(-1)?.at ?? "1970-01-01T00:00:00Z");
@@ -58,7 +59,7 @@
   }
 </script>
 
-{#key instance.name}
+{#key key}
   <div class="space-y-3" in:fly={{ y: 8, duration: duration(200), easing: easeOut }}>
     <p class="flex items-center gap-1.5 text-sm">
       <span
@@ -71,7 +72,11 @@
     </p>
     <p class="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
       <span class="font-mono font-medium break-all text-foreground">{instance.model ?? "—"}</span>
-      <span>image <span class="font-mono break-all">{instance.image}</span></span>
+      {#if instance.source === "docker"}
+        <span>image <span class="font-mono break-all">{instance.image}</span></span>
+      {:else}
+        <span class="font-mono break-all">{instanceOrigin(instance)}</span>
+      {/if}
       <span>context <span class="font-mono tabular-nums">{formatNumber(instance.max_model_len)}</span></span>
       <span>{instance.framework === "vllm" ? "vLLM" : instance.framework} <span class="font-mono">{instance.version ?? "—"}</span></span>
     </p>

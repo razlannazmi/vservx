@@ -1,0 +1,66 @@
+# vservx, hardened by default: a takeover of vservx can read the host but not control it.
+# Each optional part below says what it unlocks. Without a part, vservx still runs and
+# says what is missing.
+
+services:
+  # Docker access, through a proxy. Unlocks: the Docker containers on this machine.
+  # Why not mount /var/run/docker.sock into vservx: the Docker socket is root on the host.
+  # ":ro" on it does not help, because anything that can connect can use the whole API.
+  # Only this proxy holds the socket. It allows ping, version, listing and inspecting
+  # containers, and inspecting images. Every request that writes is refused (POST=0).
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:v0.5.0
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      POST: 0
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Published on the host's loopback only.
+    ports:
+      - "127.0.0.1:2375:2375"
+    restart: unless-stopped
+
+  vservx:
+    build: .
+    # Host networking: 127.0.0.1:2375 reaches the proxy, and container IPs are the host's.
+    network_mode: host
+    # Host PID and cgroup namespaces. Unlocks: GPU process names (nvidia-smi PIDs) and
+    # container attribution (/proc/<pid>/cgroup) that match the host's.
+    pid: host
+    cgroup: host
+    depends_on:
+      - docker-proxy
+    restart: unless-stopped
+    environment:
+      DOCKER_HOST: tcp://127.0.0.1:2375
+      # With host networking, 127.0.0.1 is reachable only from the host itself.
+      # To reach vservx from another machine, or from a reverse proxy elsewhere, set
+      # VSERVX_HOST: 0.0.0.0 and add --forwarded-allow-ips to the command, for example
+      # command: ["vservx", "serve", "--forwarded-allow-ips", "10.0.0.5"]
+      VSERVX_HOST: 127.0.0.1
+    volumes:
+      # The one thing to back up.
+      - vservx-data:/data
+      # systemd services. Unlocks: vLLM systemd units on this machine. systemctl needs the
+      # D-Bus socket and /run/systemd/system, and reads unit files from the host's unit
+      # directories (read-only). vservx runs as non-root, so systemd's polkit lets it read
+      # units but not start, stop or create them.
+      - /run/dbus/system_bus_socket:/run/dbus/system_bus_socket
+      - /run/systemd/system:/run/systemd/system:ro
+      - /etc/systemd/system:/etc/systemd/system:ro
+      # On distributions without a merged /usr, use /lib/systemd/system instead.
+      - /usr/lib/systemd/system:/usr/lib/systemd/system:ro
+    # GPUs. Unlocks: GPU metrics and processes through nvidia-smi, which the NVIDIA
+    # container runtime provides. On a host without the NVIDIA container toolkit,
+    # delete this block: "docker compose up" fails there otherwise.
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu, utility]
+
+volumes:
+  vservx-data:

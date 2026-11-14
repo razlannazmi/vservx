@@ -5,8 +5,9 @@ describe("snapshots", () => {
   it("keeps drawer state in the address", () => {
     const states: DrawerState[] = [
       { view: "server", instance: null, at: null, compare: null },
-      { view: "instance", instance: "vllm-qwen", at: 12, compare: null },
-      { view: "instance", instance: "all", at: null, compare: [3, 9] },
+      { view: "instance", instance: { source: "docker", name: "vllm-qwen" }, at: 12, compare: null },
+      { view: "instance", instance: { source: "docker", name: "all" }, at: null, compare: [3, 9] },
+      { view: "instance", instance: { source: "systemd-user", name: "vllm.service" }, at: null, compare: null },
     ];
     for (const state of states) expect(readDrawer(drawerSearch(state))).toEqual(state);
     expect(drawerSearch(null)).toBe("");

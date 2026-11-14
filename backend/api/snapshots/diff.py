@@ -1,11 +1,12 @@
 """What differs between any two snapshots. The change list uses it on neighbours, and compare on
 any pair, so both read the same."""
 
+import difflib
 from collections.abc import Callable
 from dataclasses import dataclass
 
 from api.snapshots.command import shm_text
-from api.snapshots.config import LaunchConfig
+from api.snapshots.config import Config, LaunchConfig, UnitConfig
 from api.snapshots.secrets import placeholder
 
 KEY_FILE_REPLACED = "can't compare (vservx's key file was replaced)"
@@ -17,9 +18,10 @@ class Point:
 
     container_id: str | None
     image_id: str | None
-    config: LaunchConfig | None
+    config: Config | None
     key_fingerprint: str | None
     key_id: str | None
+    vllm_version: str | None = None
 
 
 @dataclass(frozen=True)
@@ -90,10 +92,25 @@ _OPTIONS: tuple[tuple[str, Callable[[LaunchConfig], str | None]], ...] = (
 )
 
 
+def _unit_differences(old: Point, new: Point, a: UnitConfig, b: UnitConfig) -> list[Difference]:
+    old_lines, new_lines = a.text.splitlines(), b.text.splitlines()
+    found: list[Difference] = []
+    for tag, i1, i2, j1, j2 in difflib.SequenceMatcher(None, old_lines, new_lines, autojunk=False).get_opcodes():
+        if tag in ("replace", "delete"):
+            found.extend(Difference("unit file", line, None) for line in old_lines[i1:i2])
+        if tag in ("replace", "insert"):
+            found.extend(Difference("unit file", None, line) for line in new_lines[j1:j2])
+    if old.vllm_version and new.vllm_version and old.vllm_version != new.vllm_version:
+        found.append(Difference("vLLM", old.vllm_version, new.vllm_version))
+    return found
+
+
 def _config_differences(old: Point, new: Point) -> list[Difference]:
     a, b = old.config, new.config
-    if a is None or b is None:
-        return []
+    if isinstance(a, UnitConfig) and isinstance(b, UnitConfig):
+        return _unit_differences(old, new, a, b)
+    if not isinstance(a, LaunchConfig) or not isinstance(b, LaunchConfig):
+        return []  # nothing to compare, or a unit against a container
     found: list[Difference] = []
     if a.image != b.image:
         found.append(Difference("image", a.image, b.image))

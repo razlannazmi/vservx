@@ -3,8 +3,9 @@
 from collections import Counter
 from collections.abc import Iterable
 
-from api.enums import DockerStatus, InstanceState, WatchState
+from api.enums import DockerStatus, InstanceState, SystemdStatus, WatchState
 from api.schemas.watch import GpuTotalsRead, ServerCountsRead, ServerWatchRead, WorkspaceOverviewRead
+from api.watch.docker import DOCKER_MISSING
 
 # Connected, but Docker can't be used, so nothing on the server can be seen.
 _DOCKER_PROBLEMS = {DockerStatus.NEEDS_SUDO_PASSWORD, DockerStatus.SUDO_PASSWORD_REJECTED,
@@ -12,10 +13,17 @@ _DOCKER_PROBLEMS = {DockerStatus.NEEDS_SUDO_PASSWORD, DockerStatus.SUDO_PASSWORD
 _TROUBLE = {WatchState.UNREACHABLE, WatchState.SIGN_IN_FAILED, WatchState.HOST_KEY_CHANGED}
 
 
+def _docker_problem(view: ServerWatchRead) -> bool:
+    if view.state is not WatchState.CONNECTED or view.docker not in _DOCKER_PROBLEMS:
+        return False
+    # No Docker at all, but its systemd services are read: nothing on it is hidden.
+    return not (view.systemd is SystemdStatus.AVAILABLE and view.docker_message == DOCKER_MISSING)
+
+
 def workspace_overview(workspace_id: int, views: Iterable[ServerWatchRead]) -> WorkspaceOverviewRead:
     views = list(views)
     states = Counter(view.state for view in views)
-    docker_problem = sum(1 for view in views if view.state is WatchState.CONNECTED and view.docker in _DOCKER_PROBLEMS)
+    docker_problem = sum(1 for view in views if _docker_problem(view))
     servers = ServerCountsRead(
         total=len(views),
         up=states[WatchState.CONNECTED] - docker_problem,

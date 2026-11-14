@@ -22,16 +22,19 @@
     INSTANCE_FILTERS,
     INSTANCE_TONE,
     INSTANCE_WORDS,
+    instanceKey,
     matchesFilter,
     matchesQuery,
     shortModel,
     type InstanceFilter,
+    type InstanceRef,
     type InstanceRow,
   } from "$lib/watch";
 
   // One row per container, in the order given (by name), each a link to that instance.
   // Stopped ones fold away, long lists get a search and state chips, and the rows scroll inside a capped height.
   // Containers removed in the last 7 days stay as greyed rows, folded and filtered like stopped ones.
+  // Rows go by instanceKey: a system and a --user vllm.service share a name.
   let {
     instances,
     removed = [],
@@ -42,10 +45,11 @@
   }: {
     instances: WatchedInstanceRead[];
     removed?: RemovedInstanceRead[];
+    // The open instance's instanceKey.
     selected: string | null;
-    hrefFor: (name: string) => string;
-    onpick?: (name: string) => void;
-    onsnapshots: (name: string) => void;
+    hrefFor: (instance: InstanceRef) => string;
+    onpick?: (instance: InstanceRef) => void;
+    onsnapshots: (instance: InstanceRef) => void;
   } = $props();
 
   let query = $state("");
@@ -72,8 +76,8 @@
   );
   const showStopped = $derived(
     stoppedChosen ??
-      (instances.find((each) => each.name === selected)?.state === "stopped" ||
-        removed.some((each) => each.name === selected) ||
+      (instances.find((each) => instanceKey(each) === selected)?.state === "stopped" ||
+        removed.some((each) => instanceKey(each) === selected) ||
         counts.stopped === total),
   );
   // Searching or picking a chip looks through the stopped ones too, so the fold only applies to the plain list.
@@ -127,20 +131,20 @@
   // Rows whose state changed since the last poll stay tinted for a moment, then fade, so live changes are seen.
   const flashing = new SvelteSet<string>();
   const timers = new Map<string, ReturnType<typeof setTimeout>>();
-  // Not reactive: each instance's state at the last poll, to compare the next one with.
+  // Not reactive: each instance's state at the last poll, by instanceKey, to compare the next one with.
   let lastStates = new Map<string, InstanceState>();
 
   $effect(() => {
-    const list = instances;
+    const list = instances.map((each) => ({ name: instanceKey(each), state: each.state }));
     untrack(() => {
-      for (const name of changedStates(lastStates, list)) {
-        clearTimeout(timers.get(name));
-        flashing.add(name);
+      for (const key of changedStates(lastStates, list)) {
+        clearTimeout(timers.get(key));
+        flashing.add(key);
         timers.set(
-          name,
+          key,
           setTimeout(() => {
-            flashing.delete(name);
-            timers.delete(name);
+            flashing.delete(key);
+            timers.delete(key);
           }, FLASH_HOLD_MS),
         );
       }
@@ -156,9 +160,9 @@
   }
 
   // Only a click the app handled itself (not one opening a new tab) counts as picking the row.
-  function pick(event: MouseEvent, name: string) {
+  function pick(event: MouseEvent, instance: InstanceRef) {
     followLink(event);
-    if (event.defaultPrevented) onpick?.(name);
+    if (event.defaultPrevented) onpick?.(instance);
   }
 </script>
 
@@ -210,15 +214,15 @@
 <!-- On a phone, one card per instance: the page scrolls, not a box inside it, and nothing hides off to the side. -->
 {#if phone.current}
   <ul class="space-y-1.5" aria-label="Instances">
-    {#each rows as row (row.instance.name)}
-      {@const name = row.instance.name}
+    {#each rows as row (instanceKey(row.instance))}
+      {@const key = instanceKey(row.instance)}
       <InstanceCard
         {row}
-        current={name === selected}
-        flashing={flashing.has(name)}
-        href={hrefFor(name)}
-        onpick={(event) => pick(event, name)}
-        onsnapshots={() => onsnapshots(name)}
+        current={key === selected}
+        flashing={flashing.has(key)}
+        href={hrefFor(row.instance)}
+        onpick={(event) => pick(event, row.instance)}
+        onsnapshots={() => onsnapshots(row.instance)}
       />
     {/each}
   </ul>
@@ -250,13 +254,14 @@
         <span class="px-2 py-1.5 text-right">First token</span>
         <span></span>
       </div>
-      {#each rows as row (row.instance.name)}
-        {@const current = row.instance.name === selected}
+      {#each rows as row (instanceKey(row.instance))}
+        {@const key = instanceKey(row.instance)}
+        {@const current = key === selected}
         {#if row.removed}
           {@const gone = row.instance}
           <a
-            href={hrefFor(gone.name)}
-            onclick={(event) => pick(event, gone.name)}
+            href={hrefFor(gone)}
+            onclick={(event) => pick(event, gone)}
             aria-current={current ? "true" : undefined}
             class="col-[1/-2] grid grid-cols-subgrid items-center border-b text-muted-foreground outline-none
                    hover:bg-muted focus-visible:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset
@@ -280,13 +285,13 @@
         {@const usage = instance.state === "ready" ? instance.usage : null}
         {@const tag = changedLabel(instance.changed_at)}
         <a
-          href={hrefFor(instance.name)}
-          onclick={(event) => pick(event, instance.name)}
+          href={hrefFor(instance)}
+          onclick={(event) => pick(event, instance)}
           aria-current={current ? "true" : undefined}
           class="relative isolate col-[1/-2] grid grid-cols-subgrid items-center border-b outline-none
                  before:pointer-events-none before:absolute before:inset-0 before:-z-10
                  {TONE_FLASH[INSTANCE_TONE[instance.state]]}
-                 {flashing.has(instance.name) ? 'before:opacity-100' : 'before:opacity-0 before:transition-opacity before:duration-250 before:ease-out'}
+                 {flashing.has(key) ? 'before:opacity-100' : 'before:opacity-0 before:transition-opacity before:duration-250 before:ease-out'}
                  hover:bg-muted focus-visible:bg-muted focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset
                  {current ? 'bg-muted shadow-[inset_2px_0_0_var(--foreground)]' : ''}"
         >
@@ -332,7 +337,7 @@
             type="button"
             aria-label={`Snapshots of ${row.instance.name}`}
             title={`Snapshots of ${row.instance.name}`}
-            onclick={() => onsnapshots(row.instance.name)}
+            onclick={() => onsnapshots(row.instance)}
             class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground outline-none
                    hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >
