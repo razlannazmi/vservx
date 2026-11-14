@@ -33,20 +33,32 @@ _AWK_SECRET_TEST = " || ".join(
 _AWK_KEPT_TEST = " || ".join(f'name == "{n}"' for n in UNIT_KEPT_ENV)
 
 # rewrite(rest, mode) goes through the words of an Environment= value, split the way systemd does:
-# a word ends at whitespace outside quotes, either quote character opens a quote anywhere in the word,
-# and a backslash escapes the next character. A quote still open at the end of the value is no quote:
-# the word is taken again, ending at its next whitespace. mode "show": a secret name not kept goes out
-# as its name only, and only a leading double quote opens a quote (systemctl show quotes whole
-# entries). mode "cat": a secret assignment becomes NAME=<NAME>. Every other word goes out as it came in.
+# - A word ends at whitespace outside quotes.
+# - Either quote character opens a quote anywhere in the word.
+# - A backslash escapes the next character.
+# - A quote still open at the end of the value is no quote: the word is taken again, ending at its
+#   next whitespace. When that word is a secret, it takes the rest of the value with it.
+# - mode "show" (systemctl show quotes whole entries):
+#   - a secret name not kept goes out as its name only;
+#   - only a leading double quote opens a quote;
+#   - a backslash escapes only inside a quote.
+# - mode "cat":
+#   - a secret assignment becomes NAME=<NAME>;
+#   - a word with a backslash before its first "=" (or anywhere, with no "=") becomes <masked>.
+#     systemd unescapes it (HF_TOKEN\x3dv is HF_TOKEN=v), so the name can't be read here.
+# - Every other word goes out as it came in.
+#
+# continued(l): an odd number of trailing backslashes, before one CR (systemd reads CRLF too).
 _AWK_FUNCTIONS = r"""
 function secret(name,   u) { u = toupper(name); return (""" + _AWK_SECRET_TEST + r""") }
 function kept(name) { return (""" + _AWK_KEPT_TEST + r""") }
 function continued(l,   n, k) {
   n = length(l); k = 0
+  if (substr(l, n, 1) == "\r") n--
   while (n - k > 0 && substr(l, n - k, 1) == "\\") k++
   return k % 2
 }
-function rewrite(rest, mode,   out, n, i, s, c, qc, raw, plain, name, p) {
+function rewrite(rest, mode,   out, n, i, s, c, qc, raw, plain, name, p, rp, rname) {
   n = length(rest); i = 1; out = ""
   while (i <= n) {
     c = substr(rest, i, 1)
@@ -56,7 +68,7 @@ function rewrite(rest, mode,   out, n, i, s, c, qc, raw, plain, name, p) {
       c = substr(rest, i, 1)
       if (qc == "" && (c == " " || c == "\t")) break
       raw = raw c; i++
-      if (c == "\\" && i <= n) { c = substr(rest, i, 1); raw = raw c; i++; plain = plain c }
+      if (c == "\\" && i <= n && (mode == "cat" || qc != "")) { c = substr(rest, i, 1); raw = raw c; i++; plain = plain c }
       else if (qc == "" && (c == "\"" || (mode == "cat" && c == "\047")) && (mode == "cat" || length(raw) == 1)) qc = c
       else if (c == qc) qc = ""
       else plain = plain c
@@ -68,9 +80,13 @@ function rewrite(rest, mode,   out, n, i, s, c, qc, raw, plain, name, p) {
     }
     p = index(plain, "=")
     name = p ? substr(plain, 1, p - 1) : plain
-    if (mode == "show" && secret(name) && !kept(name)) out = out name
+    rp = index(raw, "=")
+    rname = rp ? substr(raw, 1, rp - 1) : raw
+    if (mode == "cat" && index(rname, "\\") > 0) out = out "<masked>"
+    else if (mode == "show" && secret(name) && !kept(name)) out = out name
     else if (mode == "cat" && p && secret(name)) out = out name "=<" name ">"
-    else out = out raw
+    else { out = out raw; continue }
+    if (qc != "") break
   }
   return out
 }
@@ -94,8 +110,9 @@ ENV_FILTER_AWK = _AWK_FUNCTIONS + r"""
 """
 
 # Directive names may be followed by whitespace before "=", and a commented-out line is masked too.
-# A trailing backslash joins the next line, so a continued directive is masked as one line; comment
-# lines inside a continuation are masked and printed on their own, and the joining goes on after them.
+# A trailing backslash (before a CR or not) joins the next line, so a continued directive is masked as
+# one line; comment lines inside a continuation are masked and printed on their own, and the joining
+# goes on after them.
 UNIT_MASK_AWK = _AWK_FUNCTIONS + r"""
 function comment(l) { return (l ~ /^[ \t]*[#;]/) }
 function mask1(l,   n) {
@@ -108,7 +125,7 @@ function mask1(l,   n) {
   if (!comment(line) && line ~ /^[ \t]*(Environment|SetCredential|SetCredentialEncrypted)[ \t]*=/)
     while (continued(line) && (getline nxt) > 0) {
       if (comment(nxt)) print mask1(nxt)
-      else line = substr(line, 1, length(line) - 1) " " nxt
+      else { sub(/\r$/, "", line); line = substr(line, 1, length(line) - 1) " " nxt }
     }
   print mask1(line)
 }
@@ -160,19 +177,20 @@ class UnitInfo:
 _ARGV = re.compile(r"argv\[\]=(.*?) ; (?=\w+=)")
 
 
-def _words(text: str, show: bool = False) -> Iterator[tuple[str, str | None]]:
-    """(raw, plain) for each word of an Environment= value, split the way systemd does: a word ends
-    at whitespace outside quotes, either quote character opens a quote anywhere in it, and a
-    backslash escapes the next character. A quote still open at the end is no quote: the word is
-    taken again, ending at its next whitespace. With `show` (systemctl show quotes whole entries),
-    only a leading double quote opens a quote. Runs of whitespace come back as (raw, None)."""
+def _words(text: str, show: bool = False) -> Iterator[tuple[str, str | None, bool]]:
+    """(raw, plain, unclosed) for each word of an Environment= value, split the way systemd does: a
+    word ends at whitespace outside quotes, either quote character opens a quote anywhere in it, and
+    a backslash escapes the next character. A quote still open at the end is no quote: the word is
+    taken again, ending at its next whitespace, and comes back unclosed. With `show` (systemctl show
+    quotes whole entries), only a leading double quote opens a quote, and a backslash escapes only
+    inside one. Runs of whitespace come back as (raw, None, False)."""
     i, n = 0, len(text)
     while i < n:
         start = i
         if text[i] in " \t":
             while i < n and text[i] in " \t":
                 i += 1
-            yield text[start:i], None
+            yield text[start:i], None, False
             continue
         quote, plain = "", []
         while i < n:
@@ -180,7 +198,7 @@ def _words(text: str, show: bool = False) -> Iterator[tuple[str, str | None]]:
             if not quote and c in " \t":
                 break
             i += 1
-            if c == "\\" and i < n:
+            if c == "\\" and i < n and (quote or not show):
                 plain.append(text[i])
                 i += 1
             elif not quote and (c == '"' and i - start == 1 if show else c in "\"'"):
@@ -194,7 +212,7 @@ def _words(text: str, show: bool = False) -> Iterator[tuple[str, str | None]]:
             while i < n and text[i] not in " \t":
                 i += 1
             plain = [text[start:i]]
-        yield text[start:i], "".join(plain)
+        yield text[start:i], "".join(plain), bool(quote)
 
 
 def _none_if_blank(value: str) -> str | None:
@@ -226,7 +244,7 @@ def _argv(exec_start: str) -> list[str]:
 
 
 def _env_entries(value: str) -> tuple[str, ...]:
-    return tuple(plain for _, plain in _words(value, show=True) if plain is not None)
+    return tuple(plain for _, plain, _ in _words(value, show=True) if plain is not None)
 
 
 def _unit(props: dict[str, str]) -> UnitInfo:
@@ -330,9 +348,17 @@ _EXEC_WORD = re.compile(r"""(?:"(?:\\.|[^"\\])*"|'[^']*'|\\.|[^\s"'\\])+|["'\\]"
 
 def _mask_env_value(value: str) -> str:
     out = []
-    for raw, plain in _words(value):
+    for raw, plain, unclosed in _words(value):
         name, sep, _ = (plain or "").partition("=")
-        out.append(f"{name}={placeholder(name)}" if sep and is_secret_env(name) else raw)
+        if plain is not None and "\\" in raw.partition("=")[0]:
+            out.append("<masked>")  # an escaped name: systemd unescapes it, so it can't be read here
+        elif not (sep and is_secret_env(name)):
+            out.append(raw)
+            continue
+        else:
+            out.append(f"{name}={placeholder(name)}")
+        if unclosed:
+            break  # a secret whose quote never closed takes the rest of the value with it
     return "".join(out)
 
 
@@ -363,12 +389,17 @@ def _mask_line(line: str) -> str:
     return line
 
 
+def _continued(line: str) -> bool:
+    body = line.removesuffix("\r")
+    return (len(body) - len(body.rstrip("\\"))) % 2 == 1
+
+
 def mask_unit_text(text: str) -> str:
     """The guard run on arrival, in case the server-side awk didn't run. Masks Environment= and
-    SetCredential*= the same way, and the secret flags on Exec*= lines, commented out or not. A
-    odd number of trailing backslashes joins the next line into one logical line; a comment line inside the
-    continuation is masked and kept on its own, and the joining goes on after it. Every other
-    line is left byte-identical."""
+    SetCredential*= the same way, and the secret flags on Exec*= lines, commented out or not. An
+    odd number of trailing backslashes (before one CR: systemd reads CRLF lines too) joins the next
+    line into one logical line; a comment line inside the continuation is masked and kept on its
+    own, and the joining goes on after it. Every other line is left byte-identical."""
     lines = text.split("\n")
     out: list[str] = []
     i = 0
@@ -376,12 +407,12 @@ def mask_unit_text(text: str) -> str:
         line = lines[i]
         i += 1
         if not _COMMENT.match(line) and _CONTINUABLE.match(line):
-            while (len(line) - len(line.rstrip("\\"))) % 2 == 1 and i < len(lines):
+            while _continued(line) and i < len(lines):
                 nxt = lines[i]
                 i += 1
                 if _COMMENT.match(nxt):
                     out.append(_mask_line(nxt))
                 else:
-                    line = line[:-1] + " " + nxt
+                    line = line.removesuffix("\r")[:-1] + " " + nxt
         out.append(_mask_line(line))
     return "\n".join(out)

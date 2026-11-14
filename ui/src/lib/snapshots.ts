@@ -3,18 +3,20 @@
 
 import type { DifferenceRead, SnapshotKind } from "$lib/api/client";
 import { clockTime } from "$lib/format";
+import { isInstanceSource, type InstanceRef } from "$lib/watch";
 
 export type DrawerState = {
   view: "server" | "instance";
   // The instance "This instance" shows; null falls back to the one selected on the page.
-  instance: string | null;
+  instance: InstanceRef | null;
   // An older snapshot shown in place of the current one.
   at: number | null;
   compare: [number, number] | null;
 };
 
-// "server", or "instance/<name>". Docker container names never hold "/", so a container named
-// "server" can't collide with the server view.
+// "server", "instance/<name>" for a Docker container, or "instance/<source>/<name>" for a unit.
+// Container and unit names never hold "/", so a container named "server" can't collide with the
+// server view, nor a name with a source.
 const KEY = "snapshots";
 const INSTANCE = "instance/";
 
@@ -22,15 +24,24 @@ function whole(text: string | null): number | null {
   return text !== null && /^\d+$/.test(text) ? Number(text) : null;
 }
 
+function readInstance(text: string): InstanceRef | null {
+  const slash = text.indexOf("/");
+  if (slash < 0) return { source: "docker", name: text };
+  const source = text.slice(0, slash);
+  const name = text.slice(slash + 1);
+  return isInstanceSource(source) && name ? { source, name } : null;
+}
+
 export function readDrawer(search: string): DrawerState | null {
   const params = new URLSearchParams(search);
   const value = params.get(KEY);
   let view: DrawerState["view"];
-  let instance: string | null = null;
+  let instance: InstanceRef | null = null;
   if (value === "server") view = "server";
   else if (value?.startsWith(INSTANCE) && value.length > INSTANCE.length) {
     view = "instance";
-    instance = value.slice(INSTANCE.length);
+    instance = readInstance(value.slice(INSTANCE.length));
+    if (instance === null) return null;
   } else return null;
   const pair = (params.get("compare") ?? "").split(",").map(whole);
   const compare: [number, number] | null =
@@ -42,7 +53,9 @@ export function readDrawer(search: string): DrawerState | null {
  * instance out: it's the page's selected instance, already in the path. */
 export function drawerSearch(state: DrawerState | null): string {
   if (state === null) return "";
-  const view = state.view === "instance" && state.instance ? INSTANCE + encodeURIComponent(state.instance) : "server";
+  const instance = state.view === "instance" ? state.instance : null;
+  const name = instance && encodeURIComponent(instance.name);
+  const view = !instance ? "server" : INSTANCE + (instance.source === "docker" ? name : `${instance.source}/${name}`);
   let search = `?${KEY}=${view}`;
   if (state.at !== null) search += `&at=${state.at}`;
   if (state.compare !== null) search += `&compare=${state.compare[0]},${state.compare[1]}`;

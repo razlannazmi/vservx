@@ -268,7 +268,7 @@ def metrics_text(prompt_tokens: float = 5000, generation_tokens: float = 1200) -
 
 METRICS_V011 = metrics_text()
 
-# Before the KV cache metric's rename (vLLM v0.10 and older), with no time-to-first-token yet.
+# vLLM v0.10 and older: KV cache usage as gpu_cache_usage_perc, and no time-to-first-token metric.
 METRICS_OLD = "\n".join([
     'vllm:num_requests_running{model_name="m"} 1.0',
     'vllm:num_requests_waiting{model_name="m"} 0.0',
@@ -473,6 +473,8 @@ class SystemdHost:
         self.docker_missing = True
         # Every unit name `systemctl show` was asked for.
         self.shown: list[str] = []
+        # `show` stops after this many blocks, as when systemctl dies partway.
+        self.show_cut: int | None = None
 
     def _systemctl(self, command: str) -> tuple[str, str, int]:
         words = shlex.split(command.removeprefix("TZ=UTC LC_ALL=C ").split(" | ", 1)[0])
@@ -489,7 +491,8 @@ class SystemdHost:
                       for block in (self.user_show if user else self.show).split("\n\n") if block.strip()}
             names = words[words.index("--") + 1:]
             self.shown += names
-            return "\n".join(blocks.get(name, _not_found(name)).rstrip("\n") + "\n" for name in names), "", 0
+            shown = [blocks.get(name, _not_found(name)).rstrip("\n") + "\n" for name in names]
+            return "\n".join(shown[:self.show_cut]), "", 0
         if verb == "cat":
             return self.cat.get(words[-1], f"# /etc/systemd/system/{words[-1]}\n[Service]\nExecStart=/bin/true\n"), "", 0
         return "", f"Unknown command verb {verb}.\n", 1

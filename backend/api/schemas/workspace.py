@@ -73,6 +73,6 @@ class OwnerChange(BaseModel):
 class AdminWorkspaceRead(BaseModel):
     id: int
     name: str
-    # None only for a workspace moved in by the upgrade from a database with no accounts.
+    # None only for an ownerless workspace, which the accounts migration creates from a database without accounts.
     owner: AccountSummary | None
     member_count: int

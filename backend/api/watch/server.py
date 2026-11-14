@@ -439,17 +439,19 @@ class ServerWatch:
     async def _show_units(self, shell: ServerShell, source: InstanceSource,
                           listed: str) -> tuple[list[UnitInfo] | None, str]:
         """`systemctl show` for the scope's listed units and its known ones, SHOW_BATCH at a time.
-        (None, first stderr line) when a batch reads as no units at all: systemctl's own exit status
-        is lost in the pipe to awk."""
+        (None, first stderr line) when a batch reads as fewer units than it asked for (it prints one
+        block per name, an alias or a not-found one too): systemctl stopped partway, and its own exit
+        status is lost in the pipe to awk."""
         prefix = f"{source}:"
         known = sorted(key.removeprefix(prefix) for key in self._known if key.startswith(prefix))
         names = list(dict.fromkeys([*parse_unit_names(listed), *known]))
         user = source is InstanceSource.SYSTEMD_USER
         units: list[UnitInfo] = []
         for start in range(0, len(names), SHOW_BATCH):
-            result = await shell.run(show_command(names[start:start + SHOW_BATCH], user))
+            chunk = names[start:start + SHOW_BATCH]
+            result = await shell.run(show_command(chunk, user))
             batch = parse_show(result.stdout)
-            if not batch:
+            if len(batch) < len(chunk):
                 return None, _first_line(result.stderr)
             units += batch
         return units, ""
@@ -492,13 +494,15 @@ class ServerWatch:
             return None  # Docker discovery finds its container
         if framework := framework_for("", " ".join(info.argv)):
             return info.argv, framework, None
-        if "vllm" not in info.name.lower():
-            return None
-        # A wrapper script: whether it runs vLLM, or a container, shows only in its processes.
         key = instance_key(source, info.name)
         confirmed = self._known_framework(key) if key in self._known else None
-        if systemd_state(info)[0] != "running":
-            return (info.argv, confirmed, None) if confirmed is not None else None
+        running = systemd_state(info)[0] == "running"
+        # Known and stopped: still there, whatever its name, even with no ExecStart (a bad setting, masked).
+        if confirmed is not None and not running:
+            return info.argv, confirmed, None
+        if "vllm" not in info.name.lower() or not running:
+            return None
+        # A wrapper script: whether it runs vLLM, or a container, shows only in its processes.
         command = cgroup_command(info.control_group)
         processes = parse_processes((await shell.run(command)).stdout) if command is not None else []
         if any(docker_wrapped(argv) for _, argv in processes):

@@ -103,12 +103,18 @@
     thisMachine = null;
     const { data } = await api.GET("/api/admin/this-machine");
     thisMachine = data ?? null;
+    // Picked before the answer came: name it now, unless a name was typed meanwhile.
+    nameAfterThisMachine();
+  }
+
+  // Picking this machine names a blank server after it.
+  function nameAfterThisMachine() {
+    if (local && !name.trim() && thisMachine) name = thisMachine.hostname;
   }
 
   function chooseKind(value: string) {
     kind = value as ServerKind;
-    // Picking this machine names a blank server after it.
-    if (local && !name.trim() && thisMachine) name = thisMachine.hostname;
+    nameAfterThisMachine();
   }
 
   function reset() {

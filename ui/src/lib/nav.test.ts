@@ -33,7 +33,9 @@ test("tabTarget: falls back to the first workspace, then none", () => {
 });
 
 test("activeTab", () => {
-  expect(activeTab({ name: "servers", workspaceSlug: "a", serverId: 3, instance: "x" })).toBe("servers");
+  expect(activeTab({ name: "servers", workspaceSlug: "a", serverId: 3, instance: { source: "docker", name: "x" } })).toBe(
+    "servers",
+  );
   expect(activeTab({ name: "members", workspaceSlug: "a" })).toBe("members");
   expect(activeTab({ name: "account" })).toBe("you");
   expect(activeTab({ name: "admin-database" })).toBe("you");

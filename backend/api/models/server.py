@@ -41,7 +41,7 @@ class Server(Base):
     jump_only: Mapped[bool] = mapped_column(default=False)
     # OpenSSH public key line recorded on the first successful login; only this key is accepted after.
     host_key: Mapped[str | None] = mapped_column(Text)
-    # When host_key was recorded; None for keys recorded before vservx kept the date.
+    # When host_key was recorded; None for a key stored without a recorded date.
     host_key_recorded_at: Mapped[datetime | None]
     # The latest connection test of this saved server (tests of unsaved settings aren't kept).
     last_test_at: Mapped[datetime | None]

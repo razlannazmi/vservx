@@ -4,7 +4,7 @@
   import { tick, untrack } from "svelte";
   import { toast } from "svelte-sonner";
   import { fade, slide } from "svelte/transition";
-  import { api, errorMessage, type InstanceSource, type SavedKeyRead, type ServerRead, type ServerWatchRead } from "$lib/api/client";
+  import { api, errorMessage, type SavedKeyRead, type ServerRead, type ServerWatchRead } from "$lib/api/client";
   import CollapsibleSection from "$lib/components/CollapsibleSection.svelte";
   import ConnectionDetails from "$lib/components/ConnectionDetails.svelte";
   import GpuStrip from "$lib/components/GpuStrip.svelte";
@@ -16,10 +16,17 @@
   import { phone } from "$lib/layout.svelte";
   import { duration, easeOut } from "$lib/motion";
   import { every } from "$lib/poll";
-  import { followLink, navigate, router } from "$lib/router.svelte";
+  import { followLink, instancePath, navigate, router } from "$lib/router.svelte";
   import { serverAddress, serverStatus, TONE_DOT, type Tone } from "$lib/servers";
   import { drawerSearch, readDrawer, type DrawerState } from "$lib/snapshots";
-  import { HISTORY_MINUTES, NEEDS_ADMIN_OWNER, NEEDS_ADMIN_OWNER_DETAIL, WATCH_POLL_MS } from "$lib/watch";
+  import {
+    HISTORY_MINUTES,
+    instanceKey,
+    NEEDS_ADMIN_OWNER,
+    NEEDS_ADMIN_OWNER_DETAIL,
+    WATCH_POLL_MS,
+    type InstanceRef,
+  } from "$lib/watch";
 
   let {
     workspaceId,
@@ -39,7 +46,7 @@
     operator: boolean;
     onEdit: (server: ServerRead) => void;
     onChanged: () => Promise<void>;
-    instance: string | null;
+    instance: InstanceRef | null;
     base: string;
   } = $props();
 
@@ -54,22 +61,30 @@
 
   const watched = $derived(!server.jump_only);
   const connected = $derived(view?.state === "connected");
+  // The address names an instance by its source and name: a system and a --user vllm.service are two.
+  const named = (each: InstanceRef) => instance !== null && instanceKey(each) === instanceKey(instance);
   // A container removed in the last 7 days, when the address names one.
-  const selectedRemoved = $derived(view?.removed.find((each) => each.name === instance) ?? null);
+  const selectedRemoved = $derived(view?.removed.find(named) ?? null);
   // The instance in the address, or (unless it names a removed one) the first that isn't folded away as stopped.
   const selected = $derived.by(() => {
     if (!view) return null;
-    const named = view.instances.find((each) => each.name === instance);
-    if (named || selectedRemoved) return named ?? null;
+    const found = view.instances.find(named);
+    if (found || selectedRemoved) return found ?? null;
     return view.instances.find((each) => each.state !== "stopped") ?? view.instances[0] ?? null;
   });
-  const selectedName = $derived(selected?.name ?? selectedRemoved?.name ?? null);
+  const selectedRef = $derived.by((): InstanceRef | null => {
+    const open = selected ?? selectedRemoved;
+    return open && { source: open.source, name: open.name };
+  });
+  const selectedKey = $derived(selectedRef && instanceKey(selectedRef));
 
+  // The address is the page's (with an instance's ?source=), then the drawer's query.
   $effect(() => {
     const search = drawerSearch(drawer);
-    void router.path;
+    const page = router.path;
     untrack(() => {
-      if (location.search !== search) history.replaceState(null, "", location.pathname + search);
+      const next = search === "" ? page : `${page}${page.includes("?") ? "&" : "?"}${search.slice(1)}`;
+      if (location.pathname + location.search !== next) history.replaceState(null, "", next);
     });
   });
 
@@ -136,7 +151,7 @@
   // looked at. A container removed in the last 7 days keeps its address.
   $effect(() => {
     if (!view?.found_at || instance === null) return;
-    if (!view.instances.some((each) => each.name === instance) && !view.removed.some((each) => each.name === instance)) {
+    if (!view.instances.some(named) && !view.removed.some(named)) {
       navigate(`${base}/servers/${server.id}`, { replace: true });
     }
   });
@@ -167,17 +182,8 @@
     if (watched) await loadView();
   }
 
-  // Which kind of instance a name is, for the requests that ask about one.
-  function sourceOf(name: string): InstanceSource {
-    return (
-      view?.instances.find((each) => each.name === name)?.source ??
-      view?.removed.find((each) => each.name === name)?.source ??
-      "docker"
-    );
-  }
-
-  function instanceHref(name: string): string {
-    return `${base}/servers/${server.id}/instances/${encodeURIComponent(name)}`;
+  function instanceHref(each: InstanceRef): string {
+    return `${base}/servers/${server.id}/${instancePath(each)}`;
   }
 
   // A row clicked in the table brings its details into view at once; their own slide-up shows the change.
@@ -211,7 +217,7 @@
           <Button
             size="sm"
             variant="outline"
-            onclick={() => (drawer = { view: "server", instance: selectedName, at: null, compare: null })}
+            onclick={() => (drawer = { view: "server", instance: selectedRef, at: null, compare: null })}
           >
             <HistoryIcon aria-hidden="true" />Snapshots
           </Button>
@@ -295,10 +301,11 @@
             <InstanceTable
               instances={current.instances}
               removed={current.removed}
-              selected={selectedName}
+              selected={selectedKey}
               hrefFor={instanceHref}
               onpick={showInstance}
-              onsnapshots={(name) => (drawer = { view: "instance", instance: name, at: null, compare: null })}
+              onsnapshots={(each) =>
+                (drawer = { view: "instance", instance: { source: each.source, name: each.name }, at: null, compare: null })}
             />
           {:else}
             <p class="rounded-lg border border-dashed px-4 py-6 text-center text-sm text-muted-foreground">
@@ -340,8 +347,7 @@
     {workspaceId}
     serverId={server.id}
     serverName={server.name}
-    pageInstance={selectedName}
-    {sourceOf}
+    pageInstance={selectedRef}
     {drawer}
     onchange={(next) => (drawer = next)}
     onclose={() => (drawer = null)}

@@ -211,7 +211,8 @@ class Shell:
         return await exchange(reader, writer, host, port, path, headers, received)
 
     async def _curl_get(self, host: str, port: int, path: str, headers: dict[str, str]) -> HttpResponse:
-        command = ["curl", "-sS", "--max-time", f"{HTTP_TIMEOUT:g}", "-o", "-", "-w", "\\n%{http_code}"]
+        # -g: no URL globbing, which takes an IPv6 host's [brackets] for a range.
+        command = ["curl", "-g", "-sS", "--max-time", f"{HTTP_TIMEOUT:g}", "-o", "-", "-w", "\\n%{http_code}"]
         # Headers (an API key) go on stdin, never on the command line where `ps` would show them.
         if headers:
             command += ["-H", "@-"]

@@ -3,6 +3,7 @@
 import type {
   DockerStatus,
   GpuRead,
+  InstanceSource,
   InstanceState,
   RemovedInstanceRead,
   ServerRead,
@@ -14,6 +15,20 @@ import { serverStatus, type Tone } from "$lib/servers";
 
 /** One line of a server's instance list: a container that's there, or one removed in the last 7 days. */
 export type InstanceRow = { removed: false; instance: WatchedInstanceRead } | { removed: true; instance: RemovedInstanceRead };
+
+/** An instance is its source and its name within the server: a system and a --user vllm.service are two. */
+export type InstanceRef = { source: InstanceSource; name: string };
+
+const SOURCES: readonly string[] = ["docker", "systemd", "systemd-user"] satisfies InstanceSource[];
+
+export function isInstanceSource(text: string): text is InstanceSource {
+  return SOURCES.includes(text);
+}
+
+/** "systemd-user:vllm.service": one string per instance, for keys and comparisons. */
+export function instanceKey(instance: InstanceRef): string {
+  return `${instance.source}:${instance.name}`;
+}
 
 /** When a removed container went, as its row and card say it: "7 Nov". */
 export function dayMonth(iso: string): string {

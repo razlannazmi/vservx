@@ -12,14 +12,14 @@
   import { canOperate } from "$lib/permissions";
   import { every } from "$lib/poll";
   import { navigate } from "$lib/router.svelte";
-  import { WATCH_POLL_MS } from "$lib/watch";
+  import { WATCH_POLL_MS, type InstanceRef } from "$lib/watch";
   import { leaveMissingWorkspace, type Workspace } from "$lib/workspaces.svelte";
 
   let {
     workspace,
     serverId,
     instance,
-  }: { workspace: Workspace; serverId: number | null; instance: string | null } = $props();
+  }: { workspace: Workspace; serverId: number | null; instance: InstanceRef | null } = $props();
 
   let servers = $state<ServerRead[]>([]);
   let keys = $state<SavedKeyRead[]>([]);

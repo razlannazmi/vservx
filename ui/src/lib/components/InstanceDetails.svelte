@@ -11,6 +11,7 @@
     HISTORY_MINUTES,
     INSTANCE_TONE,
     INSTANCE_WORDS,
+    instanceKey,
     instanceReason,
     instanceSince,
   } from "$lib/watch";
@@ -26,12 +27,12 @@
   let cap = 90;
 
   const percent = (value: number) => `${formatNumber(value)}%`;
-  // Each poll brings a new `instance` object; only a different name means a different selection.
-  const name = $derived(instance.name);
+  // Each poll brings a new `instance` object; only a different source or name means a different selection.
+  const key = $derived(instanceKey(instance));
 
   // A new selection loads its history once...
   $effect(() => {
-    const selected = name;
+    const selected = key;
     untrack(() => void loadHistory(selected));
   });
 
@@ -45,12 +46,12 @@
     });
   });
 
-  async function loadHistory(name: string) {
+  async function loadHistory(selected: string) {
     points = [];
     const { data } = await api.GET("/api/workspaces/{workspace_id}/servers/{server_id}/instances/{name}/history", {
-      params: { path: { workspace_id: workspaceId, server_id: serverId, name }, query: { source: instance.source } },
+      params: { path: { workspace_id: workspaceId, server_id: serverId, name: instance.name }, query: { source: instance.source } },
     });
-    if (!data || name !== instance.name) return;
+    if (!data || selected !== key) return;
     cap = Math.max(1, Math.round(HISTORY_SECONDS / data.interval_seconds));
     // Readings that arrived while the history was on its way are newer: keep them after it.
     const after = Date.parse(data.points.at(-1)?.at ?? "1970-01-01T00:00:00Z");
@@ -58,7 +59,7 @@
   }
 </script>
 
-{#key instance.name}
+{#key key}
   <div class="space-y-3" in:fly={{ y: 8, duration: duration(200), easing: easeOut }}>
     <p class="flex items-center gap-1.5 text-sm">
       <span

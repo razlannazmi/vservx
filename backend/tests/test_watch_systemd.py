@@ -76,15 +76,27 @@ def test_system_and_user_units_with_same_name_are_both_shown(watching, client, a
 
 def test_systemctl_failure_does_not_remove_services(watching, client, api, w, sshd, fake_vllm, db):
     host = SystemdHost(fake_vllm)
+    host.units, host.files = "llm.service loaded active running x\n", ""  # no "vllm" in its name
+    host.show = _vllm(fake_vllm.port, "llm.service")
     _, get_view = _watch(api, w, sshd, host)
     wait_for(get_view, _ready)
+    # `show` dies after its first unit: a short answer, not llm.service gone.
+    host.units = "a.service loaded active running x\n" + host.units
+    host.show_cut = 1
+    wait_for(get_view, lambda v: v["systemd"] == "unavailable")
+    # Stopped with a bad setting, so no ExecStart: known, so still there.
+    host.show_cut = None
+    host.show = "\n".join("ExecStart=" if line.startswith("ExecStart=") else line for line in _vllm(
+        fake_vllm.port, "llm.service", active="inactive", sub="dead", load="bad-setting").split("\n"))
+    wait_for(get_view, lambda v: v["systemd"] == "available" and v["instances"]
+             and v["instances"][0]["state"] == "stopped")
     host.error = "Failed to list units: Connection timed out\n"
     view = wait_for(get_view, lambda v: v["systemd"] == "unavailable")
     time.sleep(0.8)  # a few more discoveries
 
     async def kinds(session):
         return [s.kind.value for s in await session.scalars(select(Snapshot))]
-    assert [i["name"] for i in get_view()["instances"]] == ["vllm-llama.service"]
+    assert [i["name"] for i in get_view()["instances"]] == ["llm.service"]
     assert view["systemd_message"] == "Failed to list units: Connection timed out"
     assert db(kinds) == ["first_seen"]
 

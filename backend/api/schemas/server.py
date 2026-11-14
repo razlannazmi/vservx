@@ -125,7 +125,7 @@ class ServerRead(ServerBase):
     # None until the first successful login records the server's host key.
     host_key_fingerprint: str | None
     host_key_type: str | None
-    # None also for keys recorded before vservx kept the date.
+    # Also None for a host key stored without a recorded date.
     host_key_recorded_at: datetime | None
     # None until the saved server is first tested.
     last_test: LastTestRead | None

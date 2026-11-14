@@ -1,10 +1,12 @@
 /** A small router over the History API: real paths, so refresh, back and shared links work. */
 
+import { isInstanceSource, type InstanceRef } from "$lib/watch";
+
 export type Route =
   | { name: "sign-in" }
   | { name: "sign-up" }
   | { name: "home" }
-  | { name: "servers"; workspaceSlug: string; serverId: number | null; instance: string | null }
+  | { name: "servers"; workspaceSlug: string; serverId: number | null; instance: InstanceRef | null }
   | { name: "keys" | "members" | "settings"; workspaceSlug: string }
   | { name: "admin-accounts" }
   | { name: "admin-workspaces" }
@@ -37,7 +39,22 @@ function decoded(text: string): string | null {
   }
 }
 
-export function matchRoute(path: string): Route {
+/** The part of an address that picks the page: its path, and an instance's ?source=. The rest of the
+ * query (the snapshots drawer's) is the page's own. */
+function pagePath(pathname: string, search: string): string {
+  const source = new URLSearchParams(search).get("source");
+  return source === null ? pathname : `${pathname}?source=${encodeURIComponent(source)}`;
+}
+
+/** An instance's address below its server's: its name, and its source unless it's Docker's. */
+export function instancePath(instance: InstanceRef): string {
+  const path = `instances/${encodeURIComponent(instance.name)}`;
+  return instance.source === "docker" ? path : `${path}?source=${instance.source}`;
+}
+
+export function matchRoute(address: string): Route {
+  const query = address.indexOf("?");
+  const path = query < 0 ? address : address.slice(0, query);
   const trimmed = path.length > 1 ? path.replace(/\/+$/, "") : path;
   const fixed = FIXED[trimmed];
   if (fixed) return fixed;
@@ -52,9 +69,13 @@ export function matchRoute(path: string): Route {
     const serverId = id(server);
     if (serverId === null) return { name: "not-found" };
     if (sub === undefined) return { name: "servers", workspaceSlug, serverId, instance: null };
-    // An instance is its container's name, within the server.
+    // An instance is its container's or unit's name within the server, and its ?source=. Without one
+    // it's Docker's, as the API takes it and as every address from before systemd units meant.
     const instance = sub === "instances" && name ? decoded(name) : null;
-    return instance ? { name: "servers", workspaceSlug, serverId, instance } : { name: "not-found" };
+    const source = new URLSearchParams(query < 0 ? "" : address.slice(query)).get("source") ?? "docker";
+    return instance && isInstanceSource(source)
+      ? { name: "servers", workspaceSlug, serverId, instance: { source, name: instance } }
+      : { name: "not-found" };
   }
   if (sub !== undefined) return { name: "not-found" };
   if (server === undefined && WORKSPACE_PAGES.has(page)) {
@@ -69,7 +90,7 @@ export function pathFor(route: Route): string {
       if (route.serverId === null) return `/workspaces/${route.workspaceSlug}`;
       return route.instance === null
         ? `/workspaces/${route.workspaceSlug}/servers/${route.serverId}`
-        : `/workspaces/${route.workspaceSlug}/servers/${route.serverId}/instances/${encodeURIComponent(route.instance)}`;
+        : `/workspaces/${route.workspaceSlug}/servers/${route.serverId}/${instancePath(route.instance)}`;
     case "keys":
     case "members":
     case "settings":
@@ -89,13 +110,14 @@ export function pathFor(route: Route): string {
   }
 }
 
+// `path` is the page's address: pagePath, not the drawer's query.
 export const router = $state<{ route: Route; path: string }>({
-  route: matchRoute(location.pathname),
-  path: location.pathname,
+  route: matchRoute(pagePath(location.pathname, location.search)),
+  path: pagePath(location.pathname, location.search),
 });
 
 export function navigate(path: string, options: { replace?: boolean } = {}): void {
-  if (path !== location.pathname) {
+  if (path !== pagePath(location.pathname, location.search)) {
     if (options.replace) history.replaceState(null, "", path);
     else history.pushState(null, "", path);
   }
@@ -104,8 +126,8 @@ export function navigate(path: string, options: { replace?: boolean } = {}): voi
 }
 
 addEventListener("popstate", () => {
-  router.path = location.pathname;
-  router.route = matchRoute(location.pathname);
+  router.path = pagePath(location.pathname, location.search);
+  router.route = matchRoute(router.path);
 });
 
 /** onclick for in-app <a href> links: plain left clicks stay in the page, anything else
@@ -117,5 +139,5 @@ export function followLink(event: MouseEvent): void {
   }
   if (link.target && link.target !== "_self") return;
   event.preventDefault();
-  navigate(link.pathname);
+  navigate(pagePath(link.pathname, link.search));
 }

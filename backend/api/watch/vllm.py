@@ -121,7 +121,7 @@ class VLLM:
         return MetricSample(
             running=total("vllm:num_requests_running"),
             waiting=total("vllm:num_requests_waiting"),
-            # Renamed from gpu_cache_usage_perc around v0.10.
+            # vLLM from about v0.10 reports kv_cache_usage_perc, earlier versions gpu_cache_usage_perc.
             kv_cache=mean("vllm:kv_cache_usage_perc", "vllm:gpu_cache_usage_perc"),
             prompt_tokens=total("vllm:prompt_tokens_total", "vllm:prompt_tokens"),
             generation_tokens=total("vllm:generation_tokens_total", "vllm:generation_tokens"),
