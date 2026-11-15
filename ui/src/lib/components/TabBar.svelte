@@ -1,12 +1,9 @@
 <script lang="ts">
   import CircleUserIcon from "@lucide/svelte/icons/circle-user";
-  import KeyRoundIcon from "@lucide/svelte/icons/key-round";
-  import ServerIcon from "@lucide/svelte/icons/server";
-  import SettingsIcon from "@lucide/svelte/icons/settings";
-  import UsersIcon from "@lucide/svelte/icons/users";
   import { admin } from "$lib/admin.svelte";
   import YouPanel from "$lib/components/YouPanel.svelte";
-  import { activeTab, tabTarget, workspacePages, type WorkspacePageName } from "$lib/nav";
+  import { activeTab, tabTarget, workspacePages } from "$lib/nav";
+  import { PAGE_ICONS } from "$lib/nav-icons";
   import { followLink, router } from "$lib/router.svelte";
   import { session } from "$lib/session.svelte";
   import { workspaces } from "$lib/workspaces.svelte";
@@ -14,13 +11,6 @@
   // Phones only: one workspace's pages under the thumb, then You. Off a workspace page they lead into
   // the last one visited; with no workspaces, only You.
   let youOpen = $state(false);
-
-  const ICONS: Record<WorkspacePageName, typeof ServerIcon> = {
-    servers: ServerIcon,
-    keys: KeyRoundIcon,
-    members: UsersIcon,
-    settings: SettingsIcon,
-  };
 
   const route = $derived(router.route);
   const target = $derived(tabTarget(route, workspaces.list, workspaces.lastId));
@@ -39,7 +29,7 @@
   <div class="flex h-14">
     {#if target}
       {#each workspacePages(target) as page (page.name)}
-        {@const Icon = ICONS[page.name]}
+        {@const Icon = PAGE_ICONS[page.name]}
         {@const on = active === page.name}
         <a href={page.href} onclick={followLink} class={tabClass(on)} aria-current={on ? "page" : undefined}>
           <Icon class="size-5" aria-hidden="true" />
