@@ -2,6 +2,7 @@
 from api.models.action_history import ActionHistory
 from api.models.app_settings import AppSettings
 from api.models.instance import Instance
+from api.models.instance_threshold import InstanceThreshold
 from api.models.saved_key import SavedKey
 from api.models.server import Server
 from api.models.snapshot import Snapshot
@@ -12,6 +13,7 @@ __all__ = [
     "ActionHistory",
     "AppSettings",
     "Instance",
+    "InstanceThreshold",
     "SavedKey",
     "Server",
     "Snapshot",

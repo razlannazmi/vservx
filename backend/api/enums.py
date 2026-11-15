@@ -70,6 +70,15 @@ class SnapshotKind(StrEnum):
     REMOVED = "removed"
 
 
+class ThresholdMetric(StrEnum):
+    """A usage reading an instance's warning and critical thresholds apply to, named after its
+    UsagePoint field. Higher is worse for each."""
+
+    WAITING = "waiting"
+    KV_CACHE_PERCENT = "kv_cache_percent"
+    TTFT_SECONDS = "ttft_seconds"
+
+
 class WatchState(StrEnum):
     """Where vservx stands with watching a server."""
 

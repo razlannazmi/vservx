@@ -1,7 +1,7 @@
 /** Chart helpers: lines for the small SVG trends, and the data shaping behind the uPlot panels.
  * Null is always a missing reading. */
 
-import type { UsagePointRead } from "$lib/api/client";
+import type { ThresholdMetric, UsagePointRead } from "$lib/api/client";
 
 /** Range choices, in minutes; only those the history window covers are offered. */
 export const RANGE_PRESETS = [5, 15, 30, 60, 180, 360, 720, 1440];
@@ -26,15 +26,27 @@ export function seriesStats(values: (number | null)[]): Stats {
   };
 }
 
+export type ThresholdState = "ok" | "warning" | "critical";
+
+/** Where a reading stands against its thresholds: above critical, above warning, or neither. */
+export function thresholdState(value: number | null, warning: number | null, critical: number | null): ThresholdState {
+  if (value === null) return "ok";
+  if (critical !== null && value > critical) return "critical";
+  if (warning !== null && value > warning) return "warning";
+  return "ok";
+}
+
 /** Which of the `--series-N` colour tokens a series is drawn in. */
 export type SeriesColor = 1 | 2 | 3 | 4 | 5;
 
-/** One line on a panel: its legend name, colour, and how to read it from a reading. */
+/** One line on a panel: its legend name, colour, how to read it from a reading, and the threshold
+ * metric it carries, if any. */
 export type SeriesSpec = {
   key: string;
   label: string;
   color: SeriesColor;
   value: (point: UsagePointRead) => number | null;
+  metric?: ThresholdMetric;
 };
 
 /** uPlot's data: times in seconds, then one array of values per series. */
@@ -47,6 +59,14 @@ export function toColumns(points: UsagePointRead[], series: SeriesSpec[], from: 
     return at >= from && at <= to;
   });
   return [shown.map((point) => Date.parse(point.at) / 1000), ...series.map((each) => shown.map(each.value))];
+}
+
+/** An axis number: "1.2k" and "25k" from a thousand up, and up to two decimals below, so ticks 0.25 apart don't all read "0". */
+export function shortNumber(value: number): string {
+  if (Math.abs(value) >= 1000) {
+    return `${(value / 1000).toLocaleString(undefined, { maximumFractionDigits: Math.abs(value) >= 10_000 ? 0 : 1 })}k`;
+  }
+  return value.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
 const pad = (n: number) => String(n).padStart(2, "0");

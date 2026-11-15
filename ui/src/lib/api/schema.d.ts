@@ -669,6 +669,44 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workspaces/{workspace_id}/servers/{server_id}/instances/{name}/thresholds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Thresholds */
+        get: operations["get_thresholds_api_workspaces__workspace_id__servers__server_id__instances__name__thresholds_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workspaces/{workspace_id}/servers/{server_id}/instances/{name}/thresholds/{metric}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Threshold */
+        put: operations["set_threshold_api_workspaces__workspace_id__servers__server_id__instances__name__thresholds__metric__put"];
+        post?: never;
+        /**
+         * Reset Threshold
+         * @description Back to the metric's default. Resetting one already at its default changes nothing.
+         */
+        delete: operations["reset_threshold_api_workspaces__workspace_id__servers__server_id__instances__name__thresholds__metric__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workspaces/{workspace_id}/servers/{server_id}/snapshots": {
         parameters: {
             query?: never;
@@ -1017,6 +1055,11 @@ export interface components {
          * @enum {string}
          */
         InstanceState: "ready" | "starting" | "not_responding" | "restarting" | "crashed" | "stopped" | "paused" | "unreachable";
+        /** InstanceThresholdsRead */
+        InstanceThresholdsRead: {
+            /** Thresholds */
+            thresholds: components["schemas"]["ThresholdRead"][];
+        };
         /**
          * LastTestRead
          * @description The latest connection test of a saved server.
@@ -1499,6 +1542,30 @@ export interface components {
             reason: string | null;
             /** Hostname */
             hostname: string;
+        };
+        /**
+         * ThresholdMetric
+         * @description A usage reading an instance's warning and critical thresholds apply to, named after its
+         *     UsagePoint field. Higher is worse for each.
+         * @enum {string}
+         */
+        ThresholdMetric: "waiting" | "kv_cache_percent" | "ttft_seconds";
+        /** ThresholdRead */
+        ThresholdRead: {
+            metric: components["schemas"]["ThresholdMetric"];
+            /** Warning */
+            warning: number | null;
+            /** Critical */
+            critical: number | null;
+            /** Is Default */
+            is_default: boolean;
+        };
+        /** ThresholdWrite */
+        ThresholdWrite: {
+            /** Warning */
+            warning: number | null;
+            /** Critical */
+            critical: number | null;
         };
         /** TokenResponse */
         TokenResponse: {
@@ -3150,6 +3217,117 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ServerWatchRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_thresholds_api_workspaces__workspace_id__servers__server_id__instances__name__thresholds_get: {
+        parameters: {
+            query?: {
+                source?: components["schemas"]["InstanceSource"];
+            };
+            header?: never;
+            path: {
+                server_id: number;
+                name: string;
+                workspace_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstanceThresholdsRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    set_threshold_api_workspaces__workspace_id__servers__server_id__instances__name__thresholds__metric__put: {
+        parameters: {
+            query?: {
+                source?: components["schemas"]["InstanceSource"];
+            };
+            header?: never;
+            path: {
+                server_id: number;
+                name: string;
+                metric: components["schemas"]["ThresholdMetric"];
+                workspace_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ThresholdWrite"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThresholdRead"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reset_threshold_api_workspaces__workspace_id__servers__server_id__instances__name__thresholds__metric__delete: {
+        parameters: {
+            query?: {
+                source?: components["schemas"]["InstanceSource"];
+            };
+            header?: never;
+            path: {
+                server_id: number;
+                name: string;
+                metric: components["schemas"]["ThresholdMetric"];
+                workspace_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ThresholdRead"];
                 };
             };
             /** @description Validation Error */

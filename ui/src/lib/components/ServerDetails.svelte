@@ -323,7 +323,14 @@
               {#if ready && dashboard}<PanelToolbar {dashboard} />{/if}
             {/snippet}
             {#if dashboard}
-              <InstanceDetails {workspaceId} serverId={server.id} instance={selected} {dashboard} />
+              <InstanceDetails
+                {workspaceId}
+                serverId={server.id}
+                serverName={server.name}
+                instance={selected}
+                {operator}
+                {dashboard}
+              />
             {/if}
           </CollapsibleSection>
         {:else if selectedRemoved}

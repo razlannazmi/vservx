@@ -8,12 +8,13 @@
   import EllipsisIcon from "@lucide/svelte/icons/ellipsis";
   import Maximize2Icon from "@lucide/svelte/icons/maximize-2";
   import Minimize2Icon from "@lucide/svelte/icons/minimize-2";
+  import XIcon from "@lucide/svelte/icons/x";
   import { mode } from "mode-watcher";
   import { untrack } from "svelte";
   import { innerHeight } from "svelte/reactivity/window";
   import uPlot from "uplot";
   import "uplot/dist/uPlot.min.css";
-  import type { UsagePointRead } from "$lib/api/client";
+  import type { ThresholdRead, UsagePointRead } from "$lib/api/client";
   import { niceMax, seriesStats, textWidth, timeLabel, toColumns, type SeriesColor, type SeriesSpec } from "$lib/chart";
   import { alpha, cssColor, seriesColor } from "$lib/charts/colors";
   import type { Dashboard } from "$lib/charts/dashboard.svelte";
@@ -27,6 +28,10 @@
   // - The canvas is hidden from assistive technology; the legend table carries the numbers.
   // - Every panel with the same dashboard shares a crosshair and a zoom.
   // - Colours are read from the theme each time the chart draws, so a theme switch only needs a redraw.
+  // - `threshold` draws amber and red bands for the series whose metric it names; `onthresholds`, given
+  //   only to those who may change them, adds "Set thresholds" to the menu.
+  // - Full screen, the panel is the dialog's whole content: no frame of its own, and its close button
+  //   sits in the header's icon row where ⤢ is in the grid.
   let {
     title,
     unit,
@@ -35,9 +40,12 @@
     points,
     series,
     max,
+    threshold = null,
     dashboard,
     height = 150,
     fullscreen = false,
+    onthresholds,
+    onclose,
   }: {
     title: string;
     unit: string;
@@ -46,9 +54,12 @@
     points: UsagePointRead[];
     series: SeriesSpec[];
     max?: number;
+    threshold?: ThresholdRead | null;
     dashboard: Dashboard;
     height?: number;
     fullscreen?: boolean;
+    onthresholds?: () => void;
+    onclose?: () => void;
   } = $props();
 
   type Publishing = uPlot & { setCursor(opts: { left: number; top: number }, fire: boolean, publish: boolean): void };
@@ -112,6 +123,11 @@
     const made = chart;
     if (!made) return;
     series.forEach((each, i) => made.setSeries(i + 1, { show: !off.includes(each.key) }, false));
+  });
+
+  $effect(() => {
+    void threshold;
+    chart?.redraw(false, false);
   });
 
   // mode-watcher switches the page's class first; the redraw waits a frame so it reads the new colours.
@@ -184,8 +200,48 @@
           },
         ],
         setCursor: [(self) => showTip(self)],
+        drawClear: [(self) => drawThresholds(self)],
       },
     };
+  }
+
+  // Bands and dashed lines for the thresholds, under the grid and the series.
+  // - Amber from warning up to critical (or the top), red above critical.
+  // - They never change the y scale: a line above the visible top isn't drawn.
+  function drawThresholds(self: uPlot) {
+    const limits = threshold;
+    if (!limits || !series.some((each) => each.metric === limits.metric)) return;
+    const top = self.scales.y.max ?? 0;
+    const { left, top: plotTop, width, height: plotHeight } = self.bbox;
+    const y = (value: number) => self.valToPos(value, "y", true);
+    const warn = cssColor("--status-warn");
+    const bad = cssColor("--status-bad");
+    const ctx = self.ctx;
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(left, plotTop, width, plotHeight);
+    ctx.clip();
+    if (limits.warning !== null && limits.warning < top) {
+      const upper = limits.critical !== null ? Math.min(limits.critical, top) : top;
+      ctx.fillStyle = alpha(warn, 0.1);
+      ctx.fillRect(left, y(upper), width, y(limits.warning) - y(upper));
+    }
+    if (limits.critical !== null && limits.critical < top) {
+      ctx.fillStyle = alpha(bad, 0.12);
+      ctx.fillRect(left, plotTop, width, y(limits.critical) - plotTop);
+    }
+    ctx.lineWidth = uPlot.pxRatio;
+    ctx.setLineDash([4 * uPlot.pxRatio, 3 * uPlot.pxRatio]);
+    for (const [value, color] of [[limits.warning, warn], [limits.critical, bad]] as const) {
+      if (value === null || value >= top) continue;
+      const at = Math.round(y(value)) + 0.5;
+      ctx.strokeStyle = color;
+      ctx.beginPath();
+      ctx.moveTo(left, at);
+      ctx.lineTo(left + width, at);
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   // The y-axis is as wide as its longest label, since labels carry units ("1.2k tok/s").
@@ -258,8 +314,11 @@
   }
 </script>
 
+<!-- Positioned, so the legend's screen-reader-only header (absolutely placed) is held inside the panel:
+     otherwise its containing block is the page, and it stretches the page below the scrolled details pane. -->
 <div
-  class="flex min-w-0 flex-col rounded-lg border bg-card px-3 py-2 {expanded && !fullscreen ? '@min-[40rem]:col-span-2' : ''}"
+  class="relative flex min-w-0 flex-col
+         {fullscreen ? '' : 'rounded-lg border bg-card px-3 py-2'} {expanded && !fullscreen ? '@min-[40rem]:col-span-2' : ''}"
   role="group"
   aria-labelledby={id}
 >
@@ -288,8 +347,16 @@
             <DropdownMenu.Item onSelect={() => (viewing = true)}>View full screen</DropdownMenu.Item>
           {/if}
           <DropdownMenu.Item disabled={dashboard.span === null} onSelect={() => dashboard.live()}>Reset zoom</DropdownMenu.Item>
+          {#if onthresholds}
+            <DropdownMenu.Item onSelect={onthresholds}>Set thresholds</DropdownMenu.Item>
+          {/if}
         </DropdownMenu.Content>
       </DropdownMenu.Root>
+      {#if onclose}
+        <Button variant="ghost" size="icon-xs" aria-label="Close full screen" onclick={onclose}>
+          <XIcon />
+        </Button>
+      {/if}
     </div>
   </div>
 
@@ -352,7 +419,10 @@
 {#if !fullscreen}
   <Dialog.Root bind:open={viewing}>
     <!-- Never taller than the screen, so its close button stays reachable on a landscape phone. -->
-    <Dialog.Content class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-[min(72rem,calc(100vw-2rem))]">
+    <Dialog.Content
+      showCloseButton={false}
+      class="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-[min(72rem,calc(100vw-2rem))]"
+    >
       <Dialog.Title class="sr-only">{title}</Dialog.Title>
       {#if viewing}
         <TimeSeriesPanel
@@ -363,9 +433,11 @@
           {points}
           {series}
           {max}
+          {threshold}
           {dashboard}
           fullscreen
-          height={Math.max(160, (innerHeight.current ?? 600) - 220)}
+          onclose={() => (viewing = false)}
+          height={Math.max(160, (innerHeight.current ?? 600) - 200)}
         />
       {/if}
     </Dialog.Content>

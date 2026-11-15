@@ -1,6 +1,30 @@
 import { expect, test } from "vitest";
 import type { UsagePointRead } from "$lib/api/client";
-import { rangeOptions, seriesStats, textWidth, timeLabel, toColumns, type SeriesSpec } from "$lib/chart";
+import {
+  rangeOptions,
+  seriesStats,
+  shortNumber,
+  textWidth,
+  thresholdState,
+  timeLabel,
+  toColumns,
+  type SeriesSpec,
+} from "$lib/chart";
+
+test("shortNumber keeps small fractions and shortens thousands", () => {
+  expect([0, 0.25, 0.5, 3].map(shortNumber)).toEqual(["0", "0.25", "0.5", "3"]);
+  expect([1200, 25_000].map(shortNumber)).toEqual(["1.2k", "25k"]);
+});
+
+test("thresholdState is strictly above, critical first", () => {
+  expect(thresholdState(90, 90, 98)).toBe("ok");
+  expect(thresholdState(90.1, 90, 98)).toBe("warning");
+  expect(thresholdState(98, 90, 98)).toBe("warning");
+  expect(thresholdState(99, 90, 98)).toBe("critical");
+  expect(thresholdState(99, null, 98)).toBe("critical");
+  expect(thresholdState(null, 90, 98)).toBe("ok");
+  expect(thresholdState(50, null, null)).toBe("ok");
+});
 
 test("timeLabel shows seconds only when ticks are under a minute apart", () => {
   const at = new Date(2026, 10, 15, 14, 5, 30).getTime() / 1000;
