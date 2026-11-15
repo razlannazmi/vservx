@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from api.config import Settings
 from api.enums import AuthType, DockerStatus, InstanceSource, ServerKind, UserRole, WatchState, WorkspaceRole
 from api.models import SavedKey, Server, User, WorkspaceMember
-from api.schemas.watch import InstanceHistoryRead, ServerWatchRead, WatchSummaryRead
+from api.schemas.watch import InstanceHistoryRead, ServerWatchRead, UsagePointRead, WatchSummaryRead
 from api.service.connections import build_hops
 from api.service.servers import MAX_JUMP_HOSTS
 from api.snapshots.recorder import SnapshotRecorder
@@ -210,12 +210,15 @@ class Watcher:
         the last 7 days, has no points."""
         view = self.view(server_id)
         if (source, name) in {(row.source, row.name) for row in view.removed}:
-            return InstanceHistoryRead(name=name, interval_seconds=self._settings.usage_interval_seconds, points=[])
+            return self._history_read(name, [])
         if (source, name) not in {(instance.source, instance.name) for instance in view.instances}:
             return None
         history = self._histories.get(server_id, {}).get(instance_key(source, name))
-        points = [usage_read(point) for point in history.points] if history else []
-        return InstanceHistoryRead(name=name, interval_seconds=self._settings.usage_interval_seconds, points=points)
+        return self._history_read(name, [usage_read(point) for point in history.points] if history else [])
+
+    def _history_read(self, name: str, points: list[UsagePointRead]) -> InstanceHistoryRead:
+        return InstanceHistoryRead(name=name, interval_seconds=self._settings.usage_interval_seconds,
+                                   history_minutes=self._settings.history_minutes, points=points)
 
     async def refresh(self, server_id: int) -> ServerWatchRead:
         entry = self._entries.get(server_id)

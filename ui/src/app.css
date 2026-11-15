@@ -9,8 +9,10 @@
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Black and white; colour only ever means a status, and status always has words beside it.
- * Focus rings use the text colour. No blue anywhere.
+ * Black and white, with two uses of colour:
+ * - Statuses, which always have words beside them.
+ * - Chart series (--series-N), one colour per line, each at least 3:1 against --card.
+ * Focus rings use the text colour.
  */
 :root {
 	--background: #fafafa;
@@ -31,11 +33,12 @@
 	--border: #e4e4e7;
 	--input: #e4e4e7;
 	--ring: #09090b;
-	--chart-1: #d4d4d8;
-	--chart-2: #a1a1aa;
-	--chart-3: #71717a;
-	--chart-4: #52525b;
-	--chart-5: #27272a;
+	/* Blue, green, orange, purple, red. */
+	--series-1: #2563eb;
+	--series-2: #16a34a;
+	--series-3: #ea580c;
+	--series-4: #9333ea;
+	--series-5: #dc2626;
 	--radius: 0.625rem;
 	--sidebar: #f4f4f5;
 	--sidebar-foreground: #09090b;
@@ -73,11 +76,11 @@
 	--border: #27272a;
 	--input: #3f3f46;
 	--ring: #fafafa;
-	--chart-1: #3f3f46;
-	--chart-2: #52525b;
-	--chart-3: #71717a;
-	--chart-4: #a1a1aa;
-	--chart-5: #d4d4d8;
+	--series-1: #60a5fa;
+	--series-2: #4ade80;
+	--series-3: #fb923c;
+	--series-4: #c084fc;
+	--series-5: #f87171;
 	--sidebar: #111113;
 	--sidebar-foreground: #fafafa;
 	--sidebar-primary: #fafafa;
@@ -117,11 +120,11 @@
 	--color-sidebar-primary: var(--sidebar-primary);
 	--color-sidebar-foreground: var(--sidebar-foreground);
 	--color-sidebar: var(--sidebar);
-	--color-chart-5: var(--chart-5);
-	--color-chart-4: var(--chart-4);
-	--color-chart-3: var(--chart-3);
-	--color-chart-2: var(--chart-2);
-	--color-chart-1: var(--chart-1);
+	--color-series-5: var(--series-5);
+	--color-series-4: var(--series-4);
+	--color-series-3: var(--series-3);
+	--color-series-2: var(--series-2);
+	--color-series-1: var(--series-1);
 	--color-ring: var(--ring);
 	--color-input: var(--input);
 	--color-border: var(--border);

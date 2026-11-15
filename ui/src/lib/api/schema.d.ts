@@ -1000,6 +1000,8 @@ export interface components {
             name: string;
             /** Interval Seconds */
             interval_seconds: number;
+            /** History Minutes */
+            history_minutes: number;
             /** Points */
             points: components["schemas"]["UsagePointRead"][];
         };

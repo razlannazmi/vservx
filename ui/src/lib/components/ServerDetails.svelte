@@ -5,6 +5,8 @@
   import { toast } from "svelte-sonner";
   import { fade, slide } from "svelte/transition";
   import { api, errorMessage, type SavedKeyRead, type ServerRead, type ServerWatchRead } from "$lib/api/client";
+  import { Dashboard } from "$lib/charts/dashboard.svelte";
+  import PanelToolbar from "$lib/components/charts/PanelToolbar.svelte";
   import CollapsibleSection from "$lib/components/CollapsibleSection.svelte";
   import ConnectionDetails from "$lib/components/ConnectionDetails.svelte";
   import GpuStrip from "$lib/components/GpuStrip.svelte";
@@ -20,7 +22,6 @@
   import { serverAddress, serverStatus, TONE_DOT, type Tone } from "$lib/servers";
   import { drawerSearch, readDrawer, type DrawerState } from "$lib/snapshots";
   import {
-    HISTORY_MINUTES,
     instanceKey,
     NEEDS_ADMIN_OWNER,
     NEEDS_ADMIN_OWNER_DETAIL,
@@ -77,6 +78,8 @@
     return open && { source: open.source, name: open.name };
   });
   const selectedKey = $derived(selectedRef && instanceKey(selectedRef));
+  // The selected instance's panels: a new set, live, for each instance picked.
+  const dashboard = $derived(selectedKey ? new Dashboard() : null);
 
   // The address is the page's (with an instance's ?source=), then the drawer's query.
   $effect(() => {
@@ -317,9 +320,11 @@
           {@const ready = selected.state === "ready"}
           <CollapsibleSection id="instance" title={`Instance · ${selected.name}`}>
             {#snippet aside()}
-              {#if ready}last {HISTORY_MINUTES} min{/if}
+              {#if ready && dashboard}<PanelToolbar {dashboard} />{/if}
             {/snippet}
-            <InstanceDetails {workspaceId} serverId={server.id} instance={selected} />
+            {#if dashboard}
+              <InstanceDetails {workspaceId} serverId={server.id} instance={selected} {dashboard} />
+            {/if}
           </CollapsibleSection>
         {:else if selectedRemoved}
           <CollapsibleSection id="instance" title={`Instance · ${selectedRemoved.name}`}>

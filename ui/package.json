@@ -38,6 +38,7 @@
     "@jis3r/icons": "^2.9.0",
     "@lucide/svelte": "^1.66.0",
     "mode-watcher": "^1.1.0",
-    "openapi-fetch": "^0.17.0"
+    "openapi-fetch": "^0.17.0",
+    "uplot": "1.6.32"
   }
 }
