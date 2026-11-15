@@ -8,6 +8,7 @@ from api.db.base import Base, str_enum
 from api.enums import InstanceSource
 
 if TYPE_CHECKING:
+    from api.models.instance_threshold import InstanceThreshold
     from api.models.server import Server
     from api.models.snapshot import Snapshot
 
@@ -35,5 +36,8 @@ class Instance(Base):
 
     server: Mapped["Server"] = relationship(back_populates="instances")
     snapshots: Mapped[list["Snapshot"]] = relationship(
+        back_populates="instance", cascade="all, delete-orphan", passive_deletes=True
+    )
+    thresholds: Mapped[list["InstanceThreshold"]] = relationship(
         back_populates="instance", cascade="all, delete-orphan", passive_deletes=True
     )

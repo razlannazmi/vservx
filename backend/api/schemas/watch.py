@@ -161,4 +161,6 @@ class InstanceHistoryRead(BaseModel):
 
     name: str
     interval_seconds: float
+    # How far back the history goes when full, from the history_minutes setting.
+    history_minutes: float
     points: list[UsagePointRead]

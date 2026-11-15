@@ -274,6 +274,7 @@ def test_watch_api_shows_instances_without_secrets(
     assert api.get(f"{w}/watch").json() == [
         {"server_id": server_id, "state": "connected", "since": view["since"], "docker": "sudo", "counts": {"ready": 1}}]
     assert len(api.get(history_path).json()["points"]) >= 2
+    assert api.get(history_path).json()["history_minutes"] == 30
     assert api.get(f"{w}/servers/{server_id}/instances/nope/history").status_code == 404
     viewer = member_headers(WorkspaceRole.VIEWER)
     assert client.post(f"{w}/servers/{server_id}/refresh", headers=viewer).status_code == 200
