@@ -14,7 +14,8 @@
 
   let group: HTMLDivElement;
 
-  const label = (minutes: number) => (minutes < 60 ? `${minutes}m` : `${minutes / 60}h`);
+  // Whole hours read as hours; anything else, such as a 90-minute history window, stays in minutes.
+  const label = (minutes: number) => (minutes >= 60 && minutes % 60 === 0 ? `${minutes / 60}h` : `${minutes}m`);
 
   async function step(event: KeyboardEvent, index: number) {
     const by = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key];

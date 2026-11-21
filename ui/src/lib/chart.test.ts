@@ -55,6 +55,7 @@ test("seriesStats ignores gaps", () => {
 test("rangeOptions", () => {
   expect(rangeOptions(30)).toEqual([5, 15, 30]);
   expect(rangeOptions(60)).toEqual([5, 15, 30, 60]);
+  expect(rangeOptions(45)).toEqual([5, 15, 30, 45]);
   expect(rangeOptions(2)).toEqual([2]);
 });
 

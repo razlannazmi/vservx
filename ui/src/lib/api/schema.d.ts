@@ -1411,6 +1411,8 @@ export interface components {
             gpu_message: string | null;
             /** Usage Interval Seconds */
             usage_interval_seconds: number;
+            /** History Minutes */
+            history_minutes: number;
         };
         /** SignupRequest */
         SignupRequest: {

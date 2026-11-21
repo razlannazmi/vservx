@@ -800,6 +800,7 @@ class ServerWatch:
             removed=removed,
             gpus=gpus, gpu_message=self._gpu_message,
             usage_interval_seconds=self._settings.usage_interval_seconds,
+            history_minutes=self._settings.history_minutes,
         )
 
     def summary(self) -> WatchSummaryRead:

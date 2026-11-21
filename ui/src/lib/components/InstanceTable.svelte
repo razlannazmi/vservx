@@ -17,7 +17,6 @@
     formatNumber,
     formatSeconds,
     gpuLabel,
-    HISTORY_MINUTES,
     INSTANCE_FILTER_FROM,
     INSTANCE_FILTERS,
     INSTANCE_TONE,
@@ -38,6 +37,7 @@
   let {
     instances,
     removed = [],
+    historyMinutes,
     selected,
     hrefFor,
     onpick,
@@ -45,6 +45,8 @@
   }: {
     instances: WatchedInstanceRead[];
     removed?: RemovedInstanceRead[];
+    // How far back the trend column goes, from the server's watch response.
+    historyMinutes: number;
     // The open instance's instanceKey.
     selected: string | null;
     hrefFor: (instance: InstanceRef) => string;
@@ -247,7 +249,7 @@
         <span class="px-2 py-1.5">Model</span>
         <span class="px-2 py-1.5">Port</span>
         <span class="px-2 py-1.5">GPU</span>
-        <span class="hidden px-2 py-1.5 @min-[50rem]:block">Last {HISTORY_MINUTES} min</span>
+        <span class="hidden px-2 py-1.5 @min-[50rem]:block">Last {historyMinutes} min</span>
         <span class="px-2 py-1.5 text-right">Run · wait</span>
         <span class="px-2 py-1.5 text-right">KV cache</span>
         <span class="px-2 py-1.5 text-right">Tok/s out</span>

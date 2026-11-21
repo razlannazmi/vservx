@@ -203,6 +203,7 @@ class Watcher:
             server_id=server_id, state=entry.state if entry is not None else WatchState.CHECKING, since=None,
             message=None, docker=DockerStatus.UNKNOWN, docker_message=None, found_at=None, read_at=None,
             instances=[], gpus=None, gpu_message=None, usage_interval_seconds=self._settings.usage_interval_seconds,
+            history_minutes=self._settings.history_minutes,
         )
 
     def history(self, server_id: int, source: InstanceSource, name: str) -> InstanceHistoryRead | None:

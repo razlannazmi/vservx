@@ -38,9 +38,6 @@ export function dayMonth(iso: string): string {
 /** The page asks for the cards and the open server this often (the backend reads usage every 5 s). */
 export const WATCH_POLL_MS = 5_000;
 
-/** Minutes of usage the charts show; matches the backend's `history_minutes` default. */
-export const HISTORY_MINUTES = 30;
-
 /** The state label, and its detail, for this machine in a workspace no app admin owns. */
 export const NEEDS_ADMIN_OWNER = "Needs an admin owner";
 export const NEEDS_ADMIN_OWNER_DETAIL = "This machine is only watched while an app admin owns this workspace.";

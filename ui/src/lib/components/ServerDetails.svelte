@@ -304,6 +304,7 @@
             <InstanceTable
               instances={current.instances}
               removed={current.removed}
+              historyMinutes={current.history_minutes}
               selected={selectedKey}
               hrefFor={instanceHref}
               onpick={showInstance}

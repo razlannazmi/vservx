@@ -101,6 +101,8 @@ class ServerWatchRead(BaseModel):
     gpus: list[GpuRead] | None
     gpu_message: str | None
     usage_interval_seconds: float
+    # How far back each instance's running_trend goes when full, from the history_minutes setting.
+    history_minutes: float
 
 
 class WatchSummaryRead(BaseModel):

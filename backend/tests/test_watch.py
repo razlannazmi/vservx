@@ -267,6 +267,7 @@ def test_watch_api_shows_instances_without_secrets(
     view = wait_for(lambda: api.get(view_path).json(), _has_rates)
     [llama] = view["instances"]
     assert (view["state"], view["docker"], llama["state"]) == ("connected", "sudo", "ready")
+    assert view["history_minutes"] == 30
     # max_model_len comes from /v1/models, which only answers with the container's API key.
     assert (llama["model"], llama["max_model_len"], llama["version"]) == (
         "meta-llama/Llama-3.1-8B-Instruct", 32768, "0.11.0")

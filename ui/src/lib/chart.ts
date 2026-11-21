@@ -6,10 +6,10 @@ import type { ThresholdMetric, UsagePointRead } from "$lib/api/client";
 /** Range choices, in minutes; only those the history window covers are offered. */
 export const RANGE_PRESETS = [5, 15, 30, 60, 180, 360, 720, 1440];
 
-/** The presets the history window covers, or the window itself when it is shorter than all of them. */
+/** The presets the history window covers, then the window itself when it isn't a preset, so all of it can be shown. */
 export function rangeOptions(historyMinutes: number): number[] {
   const fitting = RANGE_PRESETS.filter((minutes) => minutes <= historyMinutes);
-  return fitting.length > 0 ? fitting : [historyMinutes];
+  return fitting.includes(historyMinutes) ? fitting : [...fitting, historyMinutes];
 }
 
 export type Stats = { last: number | null; min: number | null; max: number | null; mean: number | null };
