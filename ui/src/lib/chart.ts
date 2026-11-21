@@ -61,6 +61,15 @@ export function toColumns(points: UsagePointRead[], series: SeriesSpec[], from: 
   return [shown.map((point) => Date.parse(point.at) / 1000), ...series.map((each) => shown.map(each.value))];
 }
 
+/**
+ * Whether the backend kept readings between two the page got, given how often it reads.
+ * - More than one and a half intervals apart: a hidden tab or a late poll skipped one.
+ * - Less is the usual jitter of a poll.
+ */
+export function missedReadings(lastAt: string, latestAt: string, intervalSeconds: number): boolean {
+  return Date.parse(latestAt) - Date.parse(lastAt) > intervalSeconds * 1500;
+}
+
 /** An axis number: "1.2k" and "25k" from a thousand up, and up to two decimals below, so ticks 0.25 apart don't all read "0". */
 export function shortNumber(value: number): string {
   if (Math.abs(value) >= 1000) {

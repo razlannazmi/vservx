@@ -1,6 +1,7 @@
 import { expect, test } from "vitest";
 import type { UsagePointRead } from "$lib/api/client";
 import {
+  missedReadings,
   rangeOptions,
   seriesStats,
   shortNumber,
@@ -65,4 +66,11 @@ test("toColumns keeps the window and its gaps", () => {
   const series: SeriesSpec[] = [{ key: "running", label: "running", color: 1, value: (p) => p.running }];
   expect(toColumns(points, series, 20_000, 30_000)).toEqual([[20, 30], [null, 2]]);
   expect(toColumns([], series, 0, 1)).toEqual([[], []]);
+});
+
+test("missedReadings spots a skipped reading, not poll jitter", () => {
+  const at = (s: number) => new Date(s * 1000).toISOString();
+  expect(missedReadings(at(0), at(5.4), 5)).toBe(false);
+  expect(missedReadings(at(0), at(10), 5)).toBe(true);
+  expect(missedReadings(at(0), at(600), 5)).toBe(true);
 });

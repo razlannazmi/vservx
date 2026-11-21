@@ -2,7 +2,7 @@
   import { untrack } from "svelte";
   import { fly } from "svelte/transition";
   import { api, type ThresholdMetric, type ThresholdRead, type UsagePointRead, type WatchedInstanceRead } from "$lib/api/client";
-  import { shortNumber, thresholdState, type SeriesColor, type SeriesSpec } from "$lib/chart";
+  import { missedReadings, shortNumber, thresholdState, type SeriesColor, type SeriesSpec } from "$lib/chart";
   import type { Dashboard } from "$lib/charts/dashboard.svelte";
   import PanelGrid from "$lib/components/charts/PanelGrid.svelte";
   import StatPanel from "$lib/components/charts/StatPanel.svelte";
@@ -45,8 +45,9 @@
   let thresholds = $state.raw<ThresholdRead[]>([]);
   let editing = $state<ThresholdMetric | null>(null);
   let dialogOpen = $state(false);
-  // How many readings the history window holds, from the history's window and interval.
+  // How many readings the history window holds, and how often the backend takes one, from the history response.
   let cap = 360;
+  let intervalSeconds = 5;
 
   const whole = (value: number) => formatNumber(value);
   const percent = (value: number) => `${formatNumber(value)}%`;
@@ -111,10 +112,11 @@
   // The selection whose thresholds are loaded or on their way; null means ask again.
   let limitsFor: string | null = null;
 
-  // A new selection loads its history once and drops the last one's thresholds...
+  // A new selection starts from its history and drops the last one's thresholds...
   $effect(() => {
     const selected = key;
     untrack(() => {
+      points = [];
       void loadHistory(selected);
       thresholds = [];
       limitsFor = null;
@@ -130,12 +132,16 @@
   });
 
   // ...and each poll's newest reading keeps it current.
+  // - A reading well after the last one means the page missed some, as polls stop while the tab is
+  //   hidden: the history is fetched again for them, so the line doesn't jump straight across the gap.
   $effect(() => {
     const latest = instance.usage;
     if (!latest) return;
     untrack(() => {
       const last = points.at(-1);
-      if (!last || Date.parse(latest.at) > Date.parse(last.at)) points = [...points, latest].slice(-cap);
+      if (last && Date.parse(latest.at) <= Date.parse(last.at)) return;
+      points = [...points, latest].slice(-cap);
+      if (last && missedReadings(last.at, latest.at, intervalSeconds)) void loadHistory(key);
     });
   });
 
@@ -146,12 +152,12 @@
   });
 
   async function loadHistory(selected: string) {
-    points = [];
     const { data } = await api.GET("/api/workspaces/{workspace_id}/servers/{server_id}/instances/{name}/history", {
       params: { path: { workspace_id: workspaceId, server_id: serverId, name: instance.name }, query: { source: instance.source } },
     });
     if (!data || selected !== key) return;
     cap = Math.max(1, Math.round((data.history_minutes * 60) / data.interval_seconds));
+    intervalSeconds = data.interval_seconds;
     dashboard.historyMinutes = data.history_minutes;
     // Readings that arrived while the history was on its way are newer: keep them after it.
     const after = Date.parse(data.points.at(-1)?.at ?? "1970-01-01T00:00:00Z");
