@@ -4,20 +4,20 @@
   readings also go to an in-memory window that reads fall back on.
 - `start` returns at once. A background task finds the store's schema, creates it when the
   database is empty, then lets the Writer and Maintainer run. While the database can't be
-  reached it tries again every 30 s, and records stay queued.
+  reached it tries again every VSERVX_HISTORY_RETRY_SECONDS, and records stay queued.
 - A store that needs an upgrade, or was written by a newer vservx, is left alone: the Writer stays
   paused until an admin upgrades.
 """
 
 import asyncio
 import logging
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import asdict, replace
 from datetime import timedelta
+from typing import TypeVar
 
 from sqlalchemy import Table, bindparam, delete, insert, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.exc import DBAPIError, InterfaceError
 from sqlalchemy.ext.asyncio import AsyncConnection
 from sqlalchemy.sql.functions import func
 
@@ -26,6 +26,7 @@ from api.history import schema
 from api.history.maintainer import Maintainer
 from api.history.memory import MemoryStore
 from api.history.migrate import create_store, inspect_store, store_engine, upgrade_store
+from api.history.reader import Reader, ReadGuard, is_connection_problem
 from api.history.types import (
     AppLogEntry,
     AppLogPage,
@@ -47,21 +48,15 @@ from api.history.types import (
     StateChange,
     StoreSchema,
     StoreStatus,
+    StoreTuning,
     UsageReading,
     UsageSeries,
 )
-from api.history.writer import ConnectionLost, ForgetRequestLines, ForgetServer, Queued, Writer
+from api.history.writer import ConnectionLost, ForgetRequestLines, ForgetServer, Queued, Writer, describe
 
 logger = logging.getLogger(__name__)
 
-RETRY_SECONDS = 30.0
-CONNECT_TIMEOUT_SECONDS = 10.0
-STOP_FLUSH_SECONDS = 5.0
-# SQLSTATE classes worth retrying the same batch for:
-# - can't reach or get in: connection exceptions, authorization, missing database, shutdown
-# - busy: insufficient resources
-# - transaction rolled back: serialization failure, deadlock
-RETRY_SQLSTATES = ("08", "28", "3D", "53", "57P", "40")
+T = TypeVar("T")
 
 _STATES = {
     DatabaseState.CURRENT: StoreState.OK,
@@ -70,28 +65,20 @@ _STATES = {
 }
 
 
-def is_connection_problem(exc: BaseException) -> bool:
-    """True when the batch may succeed if sent again: the error isn't about what was sent."""
-    if isinstance(exc, OSError | TimeoutError | InterfaceError):
-        return True
-    if isinstance(exc, DBAPIError):
-        if exc.connection_invalidated:
-            return True
-        state = getattr(exc.orig, "sqlstate", None)
-        return isinstance(state, str) and state.startswith(RETRY_SQLSTATES)
-    return False
-
-
 class PostgresStore:
     persistent = True
 
-    def __init__(self, url: str, retention: Retention, window: timedelta, interval_seconds: float) -> None:
-        self._engine = store_engine(url)
+    def __init__(self, url: str, retention: Retention, tuning: StoreTuning, window: timedelta,
+                 interval_seconds: float) -> None:
+        self._engine = store_engine(url, tuning.pool_size)
+        self._tuning = tuning
         self._retention = retention
         self._memory = MemoryStore(window, interval_seconds, retention)
-        self._writer = Writer(self._flush)
+        self._writer = Writer(self._flush, tuning)
         self._writer.paused = True
-        self._maintainer = Maintainer(self._engine, retention)
+        self._maintainer = Maintainer(self._engine, retention, tuning)
+        self._reader = Reader(self._engine, retention, interval_seconds, tuning.event_limit)
+        self._guard = ReadGuard(tuning.read_timeout_seconds, tuning.read_failures, tuning.read_pause_seconds)
         self._state = StoreState.UNREACHABLE
         self._schema: StoreSchema | None = None
         self._error: str | None = None
@@ -131,13 +118,19 @@ class PostgresStore:
         self._writer.put(ForgetRequestLines(server_uid))
 
     async def usage(self, series: SeriesRef, span: Span, max_points: int) -> UsageSeries:
-        return replace(await self._memory.usage(series, span, max_points), degraded=True)
+        try:
+            return await self._read(lambda: self._reader.usage(series, span, max_points))
+        except HistoryUnavailable:
+            return replace(await self._memory.usage(series, span, max_points), degraded=True)
 
     async def gpus(self, server_uid: str, span: Span, max_points: int) -> GpuHistory:
-        return replace(await self._memory.gpus(server_uid, span, max_points), degraded=True)
+        try:
+            return await self._read(lambda: self._reader.gpus(server_uid, span, max_points))
+        except HistoryUnavailable:
+            return replace(await self._memory.gpus(server_uid, span, max_points), degraded=True)
 
     async def events(self, server_uid: str, span: Span, series: SeriesRef | None) -> list[StateChange]:
-        raise HistoryUnavailable
+        return await self._read(lambda: self._reader.events(server_uid, span, series))
 
     async def logs(self, series: SeriesRef, query: LogQuery) -> LogPage:
         raise HistoryUnavailable
@@ -149,7 +142,13 @@ class PostgresStore:
         raise HistoryUnavailable
 
     async def resume(self, server_uid: str) -> ResumePoint:
-        return ResumePoint(None, {}, {})
+        return await self._read(lambda: self._reader.resume(server_uid))
+
+    async def _read(self, read: Callable[[], Awaitable[T]]) -> T:
+        """Run a read through the guard. HistoryUnavailable unless the store is OK and answers in time."""
+        if self._state is not StoreState.OK:
+            raise HistoryUnavailable
+        return await self._guard.run(read)
 
     async def start(self) -> None:
         self._tasks = [asyncio.create_task(self._writer.run()), asyncio.create_task(self._connect())]
@@ -159,32 +158,41 @@ class PostgresStore:
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        lost = await self._writer.drain(STOP_FLUSH_SECONDS)
+        lost = await self._writer.drain(self._tuning.stop_flush_seconds)
         if lost:
             logger.warning("%d history records were not written to the history store before shutdown", lost)
         await self._engine.dispose()
 
     async def _connect(self) -> None:
-        """Find the store's schema, creating it in an empty database, retrying while unreachable."""
+        """Find the store's schema, creating it in an empty database.
+
+        - Tries again every retry interval while the store is unreachable.
+        - Keeps looking while it needs an upgrade, so an upgrade from the command line takes
+          effect without a restart.
+        """
         while True:
             try:
-                async with asyncio.timeout(CONNECT_TIMEOUT_SECONDS):
+                async with asyncio.timeout(self._tuning.connect_timeout_seconds):
                     found = await inspect_store(self._engine)
                     if found.state is DatabaseState.NEW:
                         await create_store(self._engine)
                         found = await inspect_store(self._engine)
             except Exception as exc:
+                error = describe(exc)
                 if self._error is None:
                     logger.warning("The history store can't be reached; trying again every %ds: %s",
-                                   int(RETRY_SECONDS), exc)
+                                   int(self._tuning.retry_seconds), error)
                 self._state = StoreState.UNREACHABLE
-                self._error = f"{type(exc).__name__}: {exc}"
-                await asyncio.sleep(RETRY_SECONDS)
+                self._error = error
+                await asyncio.sleep(self._tuning.retry_seconds)
                 continue
             self._apply(found)
-            return
+            if self._state is not StoreState.UPGRADE_REQUIRED:
+                return
+            await asyncio.sleep(self._tuning.retry_seconds)
 
     def _apply(self, found: StoreSchema) -> None:
+        previous = self._state
         self._schema = found
         self._state = _STATES[found.state]
         self._error = None
@@ -194,6 +202,8 @@ class PostgresStore:
                 self._maintaining = asyncio.create_task(self._maintainer.run())
             return
         self._writer.paused = True
+        if self._state is previous:
+            return
         if self._state is StoreState.UPGRADE_REQUIRED:
             logger.warning("The history store needs an upgrade; history isn't kept until an admin runs "
                            "`vservx db upgrade` or uses the upgrade button")
@@ -219,7 +229,7 @@ class PostgresStore:
                 await self._insert(conn, records, staged)
         except Exception as exc:
             if is_connection_problem(exc):
-                raise ConnectionLost(str(exc)) from exc
+                raise ConnectionLost(describe(exc)) from exc
             raise
         self._series.update(staged)
         for uid in forgotten:

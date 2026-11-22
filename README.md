@@ -225,6 +225,21 @@ Each part of `compose.yaml` is optional. Without one, vservx still runs and says
 | `deploy.resources.reservations.devices` (`nvidia`) | `nvidia-smi`, for the GPU panel. Delete this block on a host without the NVIDIA container toolkit, or `docker compose up` fails. |
 | `network_mode: host` | `127.0.0.1:<port>` and container addresses are the host's |
 | `vservx-data` volume at `/data` | The database and keys. The one thing to back up. |
+| `postgres` service (`history` profile) and `vservx-history` volume | The [history store](#history-store): history kept across restarts |
+
+To keep history across restarts, put a password and the matching URL in a `.env` file next to `compose.yaml`, then start with the `history` profile:
+
+```bash
+# .env
+VSERVX_HISTORY_PASSWORD=<a long random password>
+VSERVX_HISTORY_URL=postgresql://vservx:<the same password>@127.0.0.1:5432/vservx
+```
+
+```bash
+docker compose --profile history up -d
+```
+
+PostgreSQL listens on the host's loopback only (`127.0.0.1:5432`), and keeps its data in the `vservx-history` volume. Back that volume up with `pg_dump` as well.
 
 To reach vservx from another machine, or from a reverse proxy elsewhere, set `VSERVX_HOST: 0.0.0.0` and pass the proxy's address as in [Behind a reverse proxy](#run-in-production), for example `command: ["vservx", "serve", "--forwarded-allow-ips", "10.0.0.5"]`.
 
@@ -265,6 +280,49 @@ Local data lives in `~/.config/vservx/` (override with `VSERVX_DATA_DIR`). This 
 | `jwt.key` | Signs login tokens. Deleting it signs everyone out. |
 | `backups/` | A copy of `vservx.db` made before each database upgrade. Never deleted automatically. |
 
+#### History store
+
+Without a history store, history lives in memory for `VSERVX_HISTORY_MINUTES` and is lost on restart. With one, vservx keeps usage and GPU history, state changes, model logs, an audit of who changed what, and its own log in a PostgreSQL 14 or newer database. It needs no extensions, and vservx creates its tables in an empty database. App data (accounts, workspaces, servers) stays in SQLite.
+
+If the database can't be reached, vservx keeps running: records wait in memory (up to `VSERVX_HISTORY_QUEUE_MB`, oldest dropped first) and charts show the in-memory window.
+
+| Setting | Default | |
+|---|---|---|
+| `VSERVX_HISTORY_URL` | none | `postgresql://user:password@host:5432/database`. Unset: no store. |
+| `VSERVX_HISTORY_RAW_DAYS` | `7` | Days of readings at full detail |
+| `VSERVX_HISTORY_MINUTE_DAYS` | `90` | Days of one-minute averages |
+| `VSERVX_HISTORY_HOUR_DAYS` | `365` | Days of one-hour averages |
+| `VSERVX_MODEL_LOG_DAYS` | `7` | Days of vLLM output |
+| `VSERVX_APP_LOG_DAYS` | `30` | Days of vservx's own log |
+| `VSERVX_EVENT_DAYS` | `365` | Days of state changes |
+| `VSERVX_AUDIT_DAYS` | `365` | Days of the audit |
+| `VSERVX_LOG_INTERVAL_SECONDS` | `15` | How often each running instance's output is read |
+
+How the store reads, writes and looks after itself. The defaults suit most installs:
+
+| Setting | Default | |
+|---|---|---|
+| `VSERVX_HISTORY_READ_TIMEOUT_SECONDS` | `3` | Time limit of each read, including getting a connection |
+| `VSERVX_HISTORY_READ_FAILURES` | `3` | Failed reads in a row before reads skip the store for a while |
+| `VSERVX_HISTORY_READ_PAUSE_SECONDS` | `30` | How long reads skip the store after those failures |
+| `VSERVX_HISTORY_EVENT_LIMIT` | `2000` | Most state changes one read returns, newest kept |
+| `VSERVX_HISTORY_CONNECT_TIMEOUT_SECONDS` | `10` | Time limit of each connection attempt |
+| `VSERVX_HISTORY_RETRY_SECONDS` | `30` | Wait between attempts while unreachable or waiting for an upgrade |
+| `VSERVX_HISTORY_POOL_SIZE` | `5` | Connections kept open to the store |
+| `VSERVX_HISTORY_QUEUE_MB` | `64` | Records kept in memory while the store is unreachable; oldest dropped beyond it |
+| `VSERVX_HISTORY_BATCH_SIZE` | `1000` | Records written per batch |
+| `VSERVX_HISTORY_FLUSH_SECONDS` | `2` | Seconds between writes; a full batch is written at once |
+| `VSERVX_HISTORY_BACKOFF_MIN_SECONDS` | `1` | Wait after a failed write, doubling each time |
+| `VSERVX_HISTORY_BACKOFF_MAX_SECONDS` | `60` | Longest wait after failed writes |
+| `VSERVX_HISTORY_STOP_FLUSH_SECONDS` | `5` | How long shutdown waits for queued records |
+| `VSERVX_HISTORY_PARTITION_DAYS_AHEAD` | `2` | Day partitions made ahead of today |
+| `VSERVX_HISTORY_DELETE_BATCH` | `10000` | Rows deleted per table on each expiry run, outside whole-day partitions |
+| `VSERVX_HISTORY_MAINTAIN_SECONDS` | `60` | Seconds between partition and rollup runs |
+| `VSERVX_HISTORY_EXPIRE_SECONDS` | `3600` | Seconds between expiry runs |
+| `VSERVX_HISTORY_ROLLUP_BUCKETS` | `1440` | Rollup buckets computed per run, so a backlog is caught up in short steps |
+
+Grafana, or any other PostgreSQL client, can read the store too: give it its own read-only PostgreSQL user.
+
 ### Database upgrades
 
 A new version of vservx can change the database's tables. vservx never changes an existing database on its own: when it starts on a database that is older than the code, it waits until someone runs the upgrade. While it waits, `/api/health` reports `"database": "upgrade_required"`, only app admins can sign in, and every other API call returns 503 with `"code": "database_upgrade_required"`.
@@ -279,6 +337,8 @@ Both back up the database to `backups/` first, then apply every change in one tr
 To go back to a backup: stop vservx, replace `vservx.db` with the backup file, delete `vservx.db-wal` and `vservx.db-shm` if they exist, then start the vservx version that matches the backup. A newer vservx's database can't be opened by an older version; vservx reports `"database": "newer_than_app"` instead.
 
 A database created before vservx had migrations can't be upgraded. vservx refuses to start on one: move it aside or delete it, and vservx creates a new one.
+
+The history store has its own upgrades, run the same two ways: the upgrade button and `vservx db upgrade` upgrade SQLite first, then the store, and `vservx db status` and `GET /api/database` show both. Unlike SQLite, a store that needs an upgrade doesn't stop the API: history isn't kept until it's upgraded, and charts show the in-memory window. vservx doesn't back up the store, so back it up with `pg_dump` before upgrading, for example `pg_dump -Fc -f vservx-history.dump "$VSERVX_HISTORY_URL"`. A store written by a newer vservx is left alone, and reports `newer_than_app`.
 
 ### Schema changes
 

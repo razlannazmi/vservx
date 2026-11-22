@@ -3,6 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel
 
 from api.enums import DatabaseState
+from api.schemas.history import HistoryDatabaseRead
 
 
 class LastUpgradeRead(BaseModel):
@@ -26,3 +27,5 @@ class DatabaseRead(BaseModel):
     pending: list[str]
     last_upgrade: LastUpgradeRead | None
     latest_backup: BackupRead | None
+    # The history store's schema. None without a store, or before vservx has reached it.
+    history: HistoryDatabaseRead | None = None

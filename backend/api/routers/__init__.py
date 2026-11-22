@@ -7,6 +7,7 @@ from api.routers import (
     auth,
     database,
     health,
+    history,
     servers,
     snapshots,
     ssh_keys,
@@ -34,4 +35,5 @@ protected.include_router(ssh_keys.router)
 protected.include_router(watch.router)
 protected.include_router(thresholds.router)
 protected.include_router(snapshots.router)
+protected.include_router(history.router)
 router.include_router(protected)

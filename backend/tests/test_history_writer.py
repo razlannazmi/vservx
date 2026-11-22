@@ -1,11 +1,15 @@
 import asyncio
 from collections.abc import Callable, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 
+from api.config import Settings
 from api.enums import InstanceSource
-from api.history.types import AppLogEntry, SeriesRef, UsageReading
+from api.history.types import AppLogEntry, SeriesRef, StoreTuning, UsageReading
 from api.history.writer import ConnectionLost, ForgetServer, Queued, Writer
 from api.watch.usage import UsagePoint
+
+TUNING = StoreTuning.from_settings(Settings(_env_file=None))
 
 
 def _usage(server_uid: str, running: float) -> UsageReading:
@@ -37,7 +41,7 @@ def test_writer_keeps_records_through_an_outage() -> None:
     records = [_usage("u1", n) for n in range(5)]
 
     async def run() -> Writer:
-        writer = Writer(flush, interval=0.01)
+        writer = Writer(flush, replace(TUNING, flush_seconds=0.01, backoff_min_seconds=0.01))
         for record in records:
             writer.put(record)
         task = asyncio.create_task(writer.run())
@@ -59,7 +63,7 @@ def test_writer_drops_oldest_when_full() -> None:
         flushed.extend(batch)
 
     entries = [_app_log(str(n).ljust(300)) for n in range(10)]
-    writer = Writer(flush, max_bytes=1000)
+    writer = Writer(flush, replace(TUNING, queue_bytes=1000))
     for entry in entries:
         writer.put(entry)
 
@@ -75,7 +79,7 @@ def test_writer_drops_records_of_forgotten_servers() -> None:
     async def flush(batch: Sequence[Queued]) -> None:
         flushed.extend(batch)
 
-    writer = Writer(flush)
+    writer = Writer(flush, TUNING)
     kept = _usage("u2", 1.0)
     writer.put(ForgetServer("u1"))
     writer.put(_usage("u1", 1.0))
@@ -83,3 +87,15 @@ def test_writer_drops_records_of_forgotten_servers() -> None:
 
     asyncio.run(writer.drain(1.0))
     assert flushed == [ForgetServer("u1"), kept]
+
+
+def test_writer_errors_leave_out_the_statement() -> None:
+    async def flush(batch: Sequence[Queued]) -> None:
+        raise ValueError("value too long\n[SQL: INSERT INTO model_logs ...]\n[parameters: ('a user prompt',)]")
+
+    writer = Writer(flush, TUNING)
+    writer.put(_app_log("x"))
+    asyncio.run(writer.drain(1.0))
+
+    assert writer.dropped == {"app_logs": 1}
+    assert writer.last_error == "ValueError: value too long"

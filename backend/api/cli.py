@@ -1,6 +1,7 @@
 """The vservx command line: `vservx serve`, `vservx db status` and `vservx db upgrade`."""
 
 import argparse
+import asyncio
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -8,6 +9,10 @@ from pathlib import Path
 from api.config import get_settings
 from api.db import migrate
 from api.enums import DatabaseState
+from api.history.types import StoreSchema
+
+BACKUP_NOTE = ("vservx doesn't back up the history store. Back it up with pg_dump before upgrading, "
+               'for example: pg_dump -Fc -f vservx-history.dump "$VSERVX_HISTORY_URL"')
 
 
 def _when(moment: datetime) -> str:
@@ -37,6 +42,52 @@ def _upgrade(db_path: Path) -> int:
         print(f"Upgraded {result.from_revision} -> {result.to_revision} at {_when(result.upgraded_at)}.")
         print(f"Backup: {result.backup}")
     return 0
+
+
+async def _store(url: str, pool_size: int, change: DatabaseState | None) -> StoreSchema:
+    """The store's schema, after creating it (change NEW) or upgrading it (UPGRADE_REQUIRED)."""
+    # Imported here so `vservx db` without a store never loads the PostgreSQL code.
+    from api.history.migrate import create_store, inspect_store, store_engine, upgrade_store
+
+    engine = store_engine(url, pool_size)
+    try:
+        if change is DatabaseState.NEW:
+            await create_store(engine)
+        elif change is DatabaseState.UPGRADE_REQUIRED:
+            await upgrade_store(engine)
+        return await inspect_store(engine)
+    finally:
+        await engine.dispose()
+
+
+def _store_section(url: str, pool_size: int, upgrade: bool) -> int:
+    """`vservx db status` and `vservx db upgrade` for the history store."""
+    from api.history.writer import describe
+
+    print()
+    try:
+        before = asyncio.run(_store(url, pool_size, None))
+        after = before
+        if upgrade and before.state in (DatabaseState.NEW, DatabaseState.UPGRADE_REQUIRED):
+            if before.state is DatabaseState.UPGRADE_REQUIRED:
+                print(BACKUP_NOTE)
+            after = asyncio.run(_store(url, pool_size, before.state))
+    except Exception as exc:
+        print(f"History store: unreachable ({describe(exc)})")
+        return 1
+    if after is not before and before.state is DatabaseState.NEW:
+        print("History store: created its tables.")
+    elif after is not before:
+        print(f"History store: upgraded {before.current_revision} -> {after.current_revision}.")
+    elif upgrade and before.state is DatabaseState.CURRENT:
+        print("History store is already up to date.")
+    print(f"History store: {after.state}")
+    print(f"Revision: {after.current_revision or 'none'} (latest {after.head_revision})")
+    for description in after.pending:
+        print(f"  - {description}")
+    if not upgrade and after.state is DatabaseState.UPGRADE_REQUIRED:
+        print(BACKUP_NOTE)
+    return 1 if after.state is DatabaseState.NEWER_THAN_APP else 0
 
 
 def _serve(host: str, port: int, forwarded_allow_ips: str | None) -> int:
@@ -75,10 +126,14 @@ def main(argv: list[str] | None = None) -> int:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     action = _status if args.action == "status" else _upgrade
     try:
-        return action(settings.db_path)
+        code = action(settings.db_path)
     except (migrate.PreMigrationDatabaseError, migrate.UpgradeError) as exc:
         print(exc, file=sys.stderr)
         return 1
+    if settings.history_url is not None:
+        url = settings.history_url.get_secret_value()
+        code = max(code, _store_section(url, settings.history_pool_size, args.action == "upgrade"))
+    return code
 
 
 if __name__ == "__main__":

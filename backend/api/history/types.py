@@ -68,6 +68,53 @@ class Retention:
         }
 
 
+@dataclass(frozen=True)
+class StoreTuning:
+    """How the PostgreSQL store reads, writes and looks after itself: the VSERVX_HISTORY_* settings."""
+
+    read_timeout_seconds: float
+    read_failures: int
+    read_pause_seconds: float
+    event_limit: int
+    connect_timeout_seconds: float
+    retry_seconds: float
+    pool_size: int
+    queue_bytes: int
+    batch_size: int
+    flush_seconds: float
+    backoff_min_seconds: float
+    backoff_max_seconds: float
+    stop_flush_seconds: float
+    partition_days_ahead: int
+    delete_batch: int
+    maintain_seconds: float
+    expire_seconds: float
+    rollup_buckets: int
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> StoreTuning:
+        return cls(
+            read_timeout_seconds=settings.history_read_timeout_seconds,
+            read_failures=settings.history_read_failures,
+            read_pause_seconds=settings.history_read_pause_seconds,
+            event_limit=settings.history_event_limit,
+            connect_timeout_seconds=settings.history_connect_timeout_seconds,
+            retry_seconds=settings.history_retry_seconds,
+            pool_size=settings.history_pool_size,
+            queue_bytes=settings.history_queue_mb * 1024 * 1024,
+            batch_size=settings.history_batch_size,
+            flush_seconds=settings.history_flush_seconds,
+            backoff_min_seconds=settings.history_backoff_min_seconds,
+            backoff_max_seconds=settings.history_backoff_max_seconds,
+            stop_flush_seconds=settings.history_stop_flush_seconds,
+            partition_days_ahead=settings.history_partition_days_ahead,
+            delete_batch=settings.history_delete_batch,
+            maintain_seconds=settings.history_maintain_seconds,
+            expire_seconds=settings.history_expire_seconds,
+            rollup_buckets=settings.history_rollup_buckets,
+        )
+
+
 # Records
 
 

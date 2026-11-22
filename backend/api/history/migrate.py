@@ -15,6 +15,7 @@ from alembic.script.revision import RevisionError
 from sqlalchemy import Connection, make_url, text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
+from api.db.migrate import ALEMBIC_LOCK
 from api.enums import DatabaseState
 from api.history.types import StoreSchema
 
@@ -23,9 +24,10 @@ SCRIPT_LOCATION = str(Path(__file__).parent / "migrations")
 STORE_LOCK_ID = 0x7673657276780001
 
 
-def store_engine(url: str) -> AsyncEngine:
+def store_engine(url: str, pool_size: int) -> AsyncEngine:
     """An engine for a postgresql:// or postgres:// URL, through asyncpg."""
-    return create_async_engine(make_url(url).set(drivername="postgresql+asyncpg"), pool_size=5, pool_pre_ping=True)
+    return create_async_engine(make_url(url).set(drivername="postgresql+asyncpg"), pool_size=pool_size,
+                               pool_pre_ping=True)
 
 
 async def inspect_store(engine: AsyncEngine) -> StoreSchema:
@@ -96,4 +98,7 @@ async def _lock(conn: AsyncConnection) -> None:
 def _upgrade(conn: Connection) -> None:
     config = _config()
     config.attributes["connection"] = conn
-    command.upgrade(config, "head")
+    # - Shared with SQLite's migrations: Alembic's proxies are process-wide.
+    # - Waiting here blocks the event loop only while a SQLite migration runs, which needs no loop.
+    with ALEMBIC_LOCK:
+        command.upgrade(config, "head")

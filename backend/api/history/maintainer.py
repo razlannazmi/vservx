@@ -1,6 +1,7 @@
 """Keeps the history store in shape: day partitions ahead of time, rollups, and retention.
 
-- Partitions are one UTC day each, named `<table>_pYYYYMMDD`, made for today and two days ahead.
+- Partitions are one UTC day each, named `<table>_pYYYYMMDD`, made for today and
+  VSERVX_HISTORY_PARTITION_DAYS_AHEAD days after.
 - Rollups recompute whole buckets from `rollup_marks.done_until` up to the last whole bucket. The
   Writer moves a mark back when it stores older readings, so a late backlog is rolled up again.
 - Retention drops whole partitions, and deletes in bounded batches from default partitions and
@@ -21,18 +22,15 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine
 
 from api.db.base import utcnow
 from api.history.migrate import STORE_LOCK_ID
-from api.history.schema import GPU_METRICS, USAGE_METRICS
-from api.history.types import Retention
+from api.history.schema import GPU_METRICS, HOUR, MINUTE, USAGE_METRICS
+from api.history.types import Retention, StoreTuning
+from api.history.writer import describe
 
 logger = logging.getLogger(__name__)
 
 MAINTAIN_LOCK_ID = STORE_LOCK_ID + 1
+# A partition's width.
 DAY = timedelta(days=1)
-DAYS_AHEAD = 2
-# Rows removed per table per expire run from default partitions and unpartitioned tables.
-DELETE_BATCH = 10_000
-PERIOD_SECONDS = 60.0
-EXPIRE_EVERY = timedelta(hours=1)
 # date_bin's origin, so buckets line up with _floor.
 ORIGIN = "TIMESTAMPTZ '1970-01-01 00:00:00+00'"
 
@@ -57,16 +55,13 @@ class _Rollup:
     step: timedelta
     # The finer rollup this one is built from; None when built from raw readings.
     finer: str | None
-    # The most one run computes, so a long backlog is caught up in short transactions.
-    max_span: timedelta
 
 
 ROLLUPS = (
-    _Rollup("usage_1m", "usage_points", "at", ("series_id",), USAGE_METRICS, timedelta(minutes=1), None, DAY),
-    _Rollup("usage_1h", "usage_1m", "bucket", ("series_id",), USAGE_METRICS, timedelta(hours=1), "usage_1m", 7 * DAY),
-    _Rollup("gpu_1m", "gpu_points", "at", ("server_uid", "gpu_index"), GPU_METRICS, timedelta(minutes=1), None, DAY),
-    _Rollup("gpu_1h", "gpu_1m", "bucket", ("server_uid", "gpu_index"), GPU_METRICS, timedelta(hours=1), "gpu_1m",
-            7 * DAY),
+    _Rollup("usage_1m", "usage_points", "at", ("series_id",), USAGE_METRICS, MINUTE, None),
+    _Rollup("usage_1h", "usage_1m", "bucket", ("series_id",), USAGE_METRICS, HOUR, "usage_1m"),
+    _Rollup("gpu_1m", "gpu_points", "at", ("server_uid", "gpu_index"), GPU_METRICS, MINUTE, None),
+    _Rollup("gpu_1h", "gpu_1m", "bucket", ("server_uid", "gpu_index"), GPU_METRICS, HOUR, "gpu_1m"),
 )
 
 
@@ -109,27 +104,29 @@ def _rollup_statement(rollup: _Rollup) -> str:
 
 
 class Maintainer:
-    def __init__(self, engine: AsyncEngine, retention: Retention) -> None:
+    def __init__(self, engine: AsyncEngine, retention: Retention, tuning: StoreTuning) -> None:
         self._engine = engine
         self._retention = retention
+        self._tuning = tuning
         self._logged: set[str] = set()
 
     async def run(self) -> None:
-        """Make partitions and roll up every minute, and expire old history every hour, until cancelled."""
+        """Make partitions and roll up every maintain interval, and expire every expire interval, until cancelled."""
+        expire_every = timedelta(seconds=self._tuning.expire_seconds)
         last_expire: datetime | None = None
         while True:
             now = utcnow()
             await self._attempt("make partitions", self.ensure_partitions(now))
             await self._attempt("roll up", self.roll_up(now))
-            if last_expire is None or now - last_expire >= EXPIRE_EVERY:
+            if last_expire is None or now - last_expire >= expire_every:
                 await self._attempt("expire", self.expire(now))
                 last_expire = now
-            await asyncio.sleep(PERIOD_SECONDS)
+            await asyncio.sleep(self._tuning.maintain_seconds)
 
     async def ensure_partitions(self, now: datetime) -> None:
         first = _day(now)
         for table, column in PARTITION_COLUMNS.items():
-            for offset in range(DAYS_AHEAD + 1):
+            for offset in range(self._tuning.partition_days_ahead + 1):
                 await self._ensure_partition(table, column, first + offset * DAY)
 
     async def roll_up(self, now: datetime) -> None:
@@ -164,11 +161,11 @@ class Maintainer:
                     await conn.execute(text(f"LOCK TABLE {table} IN ACCESS EXCLUSIVE MODE"))
                 for name in expired:
                     await conn.execute(text(f"DROP TABLE {name}"))
-                await _delete_before(conn, f"{table}_default", column, cutoff)
+                await _delete_before(conn, f"{table}_default", column, cutoff, self._tuning.delete_batch)
         for table, (column, table_days) in unpartitioned.items():
             async with self._engine.begin() as conn:
                 await _lock(conn)
-                await _delete_before(conn, table, column, now - timedelta(days=table_days))
+                await _delete_before(conn, table, column, now - timedelta(days=table_days), self._tuning.delete_batch)
 
     async def _ensure_partition(self, table: str, column: str, day: datetime) -> None:
         """Make one day's partition. Rows already in the default partition for that day move into it."""
@@ -216,7 +213,8 @@ class Maintainer:
             finer = (await conn.execute(text("SELECT done_until FROM rollup_marks WHERE name = :name"),
                                         {"name": rollup.finer})).scalar()
             end = min(end, _floor(finer, rollup.step)) if finer is not None else start
-        end = min(end, start + rollup.max_span)
+        # A bounded run, so a long backlog is caught up in short transactions.
+        end = min(end, start + rollup.step * self._tuning.rollup_buckets)
         if end <= start:
             return
         await conn.execute(text(_rollup_statement(rollup)), {"start": start, "end": end})
@@ -233,7 +231,7 @@ class Maintainer:
             key = f"{step}:{type(exc).__name__}"
             if key not in self._logged:
                 self._logged.add(key)
-                logger.warning("History store maintenance could not %s: %s", step, exc)
+                logger.warning("History store maintenance could not %s: %s", step, describe(exc))
         else:
             self._logged = {key for key in self._logged if not key.startswith(f"{step}:")}
 
@@ -256,8 +254,8 @@ async def _partitions(conn: AsyncConnection, table: str) -> list[str]:
     return [row[0] for row in rows]
 
 
-async def _delete_before(conn: AsyncConnection, table: str, column: str, cutoff: datetime) -> None:
+async def _delete_before(conn: AsyncConnection, table: str, column: str, cutoff: datetime, batch: int) -> None:
     await conn.execute(text(
         f"DELETE FROM {table} WHERE ctid IN "
-        f"(SELECT ctid FROM {table} WHERE {column} < :cutoff LIMIT {DELETE_BATCH})"
-    ), {"cutoff": cutoff})
+        f"(SELECT ctid FROM {table} WHERE {column} < :cutoff LIMIT :batch)"
+    ), {"cutoff": cutoff, "batch": batch})

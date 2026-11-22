@@ -20,6 +20,7 @@ from api.config import get_settings
 from api.db.crypto import init_crypto
 from api.db.engine import create_engine, create_sessionmaker
 from api.enums import DatabaseState
+from api.history import open_store
 from api.routers import router as api_router
 from api.service.database import DatabaseGate, DatabaseNotReady
 from api.service.users import AccountBlocked, seed_admin
@@ -69,6 +70,9 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     engine = create_engine(settings.db_path)
     app.state.engine = engine
     app.state.sessionmaker = create_sessionmaker(engine)
+    # Started before anything can write to it; returns at once even when the store is unreachable.
+    app.state.history = open_store(settings)
+    await app.state.history.start()
     app.state.watcher = Watcher(app.state.sessionmaker, settings)
 
     async def on_database_ready() -> None:
@@ -86,6 +90,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     finally:
         # Closes every server's SSH connection.
         await app.state.watcher.stop()
+        # After the watcher, so its last records are flushed.
+        await app.state.history.stop()
         await engine.dispose()
 
 

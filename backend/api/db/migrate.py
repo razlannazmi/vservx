@@ -8,6 +8,7 @@ would cascade-delete its child rows), and DDL that really runs inside one transa
 import json
 import logging
 import sqlite3
+import threading
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime
@@ -30,6 +31,11 @@ logger = logging.getLogger(__name__)
 
 SCRIPT_LOCATION = str(Path(__file__).parent / "migrations")
 UPGRADE_ACTION = "database_upgrade"
+# - Alembic's `op` and `context` are process-wide proxies, so two migrations running at once
+#   (SQLite in a worker thread, the history store on the event loop) would send one's
+#   statements to the other's database.
+# - Every Alembic upgrade in this process holds this lock.
+ALEMBIC_LOCK = threading.Lock()
 
 
 class PreMigrationDatabaseError(RuntimeError):
@@ -196,7 +202,8 @@ def _descriptions(script: ScriptDirectory, head: str, current: str) -> list[str]
 def _run_migrations(conn: Connection, db_path: Path) -> None:
     config = alembic_config(db_path)
     config.attributes["connection"] = conn
-    command.upgrade(config, "head")
+    with ALEMBIC_LOCK:
+        command.upgrade(config, "head")
     broken = conn.exec_driver_sql("PRAGMA foreign_key_check").fetchall()
     if broken:
         raise RuntimeError(f"Migration left {len(broken)} broken foreign key reference(s)")

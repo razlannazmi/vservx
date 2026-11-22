@@ -15,7 +15,16 @@ from dataclasses import dataclass
 from datetime import datetime
 
 from api.db.base import utcnow
-from api.history.types import AppLogEntry, AuditEntry, GpuReading, LogLines, Record, StateChange, UsageReading
+from api.history.types import (
+    AppLogEntry,
+    AuditEntry,
+    GpuReading,
+    LogLines,
+    Record,
+    StateChange,
+    StoreTuning,
+    UsageReading,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,10 +51,18 @@ class ConnectionLost(Exception):
     """A flush failed because the store couldn't be reached; its batch is kept for a retry."""
 
 
-# Estimated size of a record that isn't log text.
+# Estimated size of a record that isn't log text, for the queue's size limit.
 SMALL_RECORD_BYTES = 200
-MIN_BACKOFF_SECONDS = 1.0
-MAX_BACKOFF_SECONDS = 60.0
+
+
+def describe(exc: BaseException) -> str:
+    """An error's type and first line, for logs and status.
+
+    - SQLAlchemy errors go on to print the statement and its parameters, which can hold log
+      lines and the prompts in them: those lines are left out.
+    """
+    lines = str(exc).strip().splitlines()
+    return f"{type(exc).__name__}: {lines[0]}" if lines else type(exc).__name__
 
 
 def kind_of(item: Queued) -> str:
@@ -93,12 +110,13 @@ def _is_control(item: Queued) -> bool:
 
 
 class Writer:
-    def __init__(self, flush: Flush, *, max_bytes: int = 64 * 1024 * 1024, batch_size: int = 1000,
-                 interval: float = 2.0) -> None:
+    def __init__(self, flush: Flush, tuning: StoreTuning) -> None:
         self._flush = flush
-        self._max_bytes = max_bytes
-        self._batch_size = batch_size
-        self._interval = interval
+        self._max_bytes = tuning.queue_bytes
+        self._batch_size = tuning.batch_size
+        self._interval = tuning.flush_seconds
+        self._min_backoff = tuning.backoff_min_seconds
+        self._max_backoff = tuning.backoff_max_seconds
         self._lock = threading.Lock()
         self._items: deque[tuple[Queued, int]] = deque()
         self._bytes = 0
@@ -136,10 +154,10 @@ class Writer:
             self._wake_soon()
 
     async def run(self) -> None:
-        """Flush every `interval`, or sooner once a batch is full, until cancelled."""
+        """Flush every flush interval, or sooner once a batch is full, until cancelled."""
         self._loop = asyncio.get_running_loop()
         self._wake = asyncio.Event()
-        backoff = MIN_BACKOFF_SECONDS
+        backoff = self._min_backoff
         while True:
             try:
                 async with asyncio.timeout(self._interval):
@@ -149,10 +167,10 @@ class Writer:
             self._wake.clear()
             while not self.paused and (entries := self._take()):
                 if await self._send(entries):
-                    backoff = MIN_BACKOFF_SECONDS
+                    backoff = self._min_backoff
                 else:
                     await asyncio.sleep(backoff)
-                    backoff = min(backoff * 2, MAX_BACKOFF_SECONDS)
+                    backoff = min(backoff * 2, self._max_backoff)
 
     async def drain(self, timeout: float) -> int:
         """Flush what's queued, for at most `timeout` seconds. Returns how many records are left unwritten."""
@@ -183,10 +201,11 @@ class Writer:
                 for item, _ in entries:
                     if not _is_control(item):
                         self._count_dropped(item)
-            self.last_error = f"{type(exc).__name__}: {exc}"
+            self.last_error = describe(exc)
             if type(exc) not in self._logged:
                 self._logged.add(type(exc))
-                logger.warning("The history store rejected %d records, which were dropped: %s", len(entries), exc)
+                logger.warning("The history store rejected %d records, which were dropped: %s", len(entries),
+                               self.last_error)
             return True
         self._finish()
         self.retrying = False

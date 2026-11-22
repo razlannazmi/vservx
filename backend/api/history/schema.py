@@ -7,6 +7,8 @@
   reads, writes and the migrations' drift check.
 """
 
+from datetime import timedelta
+
 from sqlalchemy import (
     TIMESTAMP,
     BigInteger,
@@ -27,6 +29,10 @@ metadata = MetaData(naming_convention={
     "uq": "uq_%(table_name)s_%(column_0_name)s",
     "pk": "pk_%(table_name)s",
 })
+
+# Bucket widths of the _1m and _1h rollup tables.
+MINUTE = timedelta(minutes=1)
+HOUR = timedelta(hours=1)
 
 USAGE_METRICS = ("running", "waiting", "kv_cache_percent", "tokens_in_per_s", "tokens_out_per_s", "ttft_seconds")
 GPU_METRICS = ("utilization", "memory_used", "memory_total", "temperature")

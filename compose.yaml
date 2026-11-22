@@ -21,6 +21,24 @@ services:
       - "127.0.0.1:2375:2375"
     restart: unless-stopped
 
+  # The history store. Unlocks: history kept across restarts (charts beyond 30 minutes, state
+  # changes, model logs, the audit). Started only by `docker compose --profile history up -d`,
+  # with VSERVX_HISTORY_PASSWORD and VSERVX_HISTORY_URL set in a .env file next to this one.
+  postgres:
+    image: postgres:17
+    profiles: [history]
+    environment:
+      POSTGRES_USER: vservx
+      POSTGRES_DB: vservx
+      # No default: PostgreSQL refuses to start until one is set.
+      POSTGRES_PASSWORD: ${VSERVX_HISTORY_PASSWORD:-}
+    volumes:
+      - vservx-history:/var/lib/postgresql/data
+    # Published on the host's loopback only, where vservx (host networking) reaches it.
+    ports:
+      - "127.0.0.1:5432:5432"
+    restart: unless-stopped
+
   vservx:
     build: .
     # Host networking: 127.0.0.1:2375 reaches the proxy, and container IPs are the host's.
@@ -39,6 +57,8 @@ services:
       # VSERVX_HOST: 0.0.0.0 and add --forwarded-allow-ips to the command, for example
       # command: ["vservx", "serve", "--forwarded-allow-ips", "10.0.0.5"]
       VSERVX_HOST: 127.0.0.1
+      # Empty: no history store, and history stays in memory.
+      VSERVX_HISTORY_URL: ${VSERVX_HISTORY_URL:-}
     volumes:
       # The one thing to back up.
       - vservx-data:/data
@@ -64,3 +84,4 @@ services:
 
 volumes:
   vservx-data:
+  vservx-history:
