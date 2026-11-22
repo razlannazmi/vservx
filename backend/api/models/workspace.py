@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime
 
 from sqlalchemy import ForeignKey, Index, String, text
@@ -13,6 +14,8 @@ class Workspace(Base):
     __tablename__ = "workspaces"
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    # Names this workspace in the history store, which outlives the row; SQLite can reuse a deleted row's id.
+    uid: Mapped[str] = mapped_column(String(36), unique=True, default=lambda: str(uuid.uuid4()))
     name: Mapped[str] = mapped_column(String(255))
     # The name case-folded: unique, so "Homelab" and "homelab" can't both exist. The web app's
     # addresses are made from names.

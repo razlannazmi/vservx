@@ -60,6 +60,17 @@ class DatabaseState(StrEnum):
     NEWER_THAN_APP = "newer_than_app"
 
 
+class StoreState(StrEnum):
+    """Whether the history store can keep and serve history right now."""
+
+    # No store is set: history lives in memory only.
+    OFF = "off"
+    OK = "ok"
+    UNREACHABLE = "unreachable"
+    UPGRADE_REQUIRED = "upgrade_required"
+    NEWER_THAN_APP = "newer_than_app"
+
+
 class SnapshotKind(StrEnum):
     """What a snapshot records about its instance."""
 

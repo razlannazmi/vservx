@@ -1,7 +1,8 @@
+import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, String, Text, UniqueConstraint, false
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from api.db.base import Base, str_enum, utcnow
@@ -18,6 +19,8 @@ class Server(Base):
     __table_args__ = (UniqueConstraint("workspace_id", "name"),)
 
     id: Mapped[int] = mapped_column(primary_key=True)
+    # Names this server in the history store, which outlives the row; SQLite can reuse a deleted row's id.
+    uid: Mapped[str] = mapped_column(String(36), unique=True, default=lambda: str(uuid.uuid4()))
     # Deleting a workspace deletes its servers first (api.service.workspaces.delete_workspace).
     workspace_id: Mapped[int] = mapped_column(ForeignKey("workspaces.id", ondelete="RESTRICT"), index=True)
     name: Mapped[str] = mapped_column(String(255))
@@ -39,6 +42,8 @@ class Server(Base):
     jump_server_id: Mapped[int | None] = mapped_column(ForeignKey("servers.id", ondelete="RESTRICT"), index=True)
     # Only a doorway to other servers: tested and remembered, never searched for vLLM.
     jump_only: Mapped[bool] = mapped_column(default=False)
+    # Keep vLLM's per-request log lines, which can include the prompts users send. Off: they're dropped.
+    keep_request_logs: Mapped[bool] = mapped_column(default=False, server_default=false())
     # OpenSSH public key line recorded on the first successful login; only this key is accepted after.
     host_key: Mapped[str | None] = mapped_column(Text)
     # When host_key was recorded; None for a key stored without a recorded date.

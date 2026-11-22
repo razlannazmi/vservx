@@ -14,6 +14,8 @@ dependencies = [
     "email-validator>=2.1",
     "sqlalchemy[asyncio]>=2.0",
     "aiosqlite>=0.20",
+    # The history store's PostgreSQL driver.
+    "asyncpg>=0.29",
     "alembic>=1.13",
     "cryptography>=43",
     "argon2-cffi>=23.1",

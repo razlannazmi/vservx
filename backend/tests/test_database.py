@@ -5,6 +5,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pytest
+from alembic import command
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
 from alembic.script import ScriptDirectory
@@ -42,6 +43,33 @@ def test_migrations_match_models(data_dir: Path) -> None:
     # A new database gets no workspace, and sign-up starts open.
     assert _sql(db_path, "SELECT count(*) FROM workspaces") == [(0,)]
     assert _sql(db_path, "SELECT id, signup_open FROM app_settings") == [(1, 1)]
+
+
+def test_upgrade_gives_existing_rows_distinct_uids(data_dir: Path) -> None:
+    db_path = data_dir / "vservx.db"
+    engine = migrate.migration_engine(db_path)
+    try:
+        with engine.connect() as conn, conn.begin():
+            config = migrate.alembic_config(db_path)
+            config.attributes["connection"] = conn
+            command.upgrade(config, "0007")
+    finally:
+        engine.dispose()
+    now = "2026-01-01 00:00:00.000000"
+    for n in (1, 2):
+        _sql(db_path, "INSERT INTO users (name, email, password_hash, role, is_active, token_version, "
+             "created_at, updated_at) VALUES (?, ?, 'x', 'member', 1, 0, ?, ?)", f"u{n}", f"u{n}@x.io", now, now)
+        _sql(db_path, "INSERT INTO workspaces (name, name_key, created_at, updated_at) VALUES (?, ?, ?, ?)",
+             f"w{n}", f"w{n}", now, now)
+        _sql(db_path, "INSERT INTO servers (workspace_id, name, host, port, username, auth_type, jump_only, "
+             "created_at, updated_at) VALUES (1, ?, 'h', 22, 'u', 'password', 0, ?, ?)", f"s{n}", now, now)
+
+    migrate.upgrade_database(db_path, by="test", user_id=None, source="cli")
+
+    for table in ("users", "workspaces", "servers"):
+        uids = [row[0] for row in _sql(db_path, f"SELECT uid FROM {table}")]
+        assert len(uids) == 2 and len(set(uids)) == 2 and all(len(u) == 36 for u in uids)
+    assert [row[0] for row in _sql(db_path, "SELECT keep_request_logs FROM servers")] == [0, 0]
 
 
 def test_failed_upgrade_leaves_database_unchanged(

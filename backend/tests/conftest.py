@@ -1,4 +1,6 @@
 import asyncio
+import os
+import secrets
 import shutil
 import socket
 import textwrap
@@ -6,10 +8,11 @@ from collections.abc import Awaitable, Callable, Iterator
 from pathlib import Path
 from typing import Any
 
+import asyncpg
 import pytest
 from alembic.script import ScriptDirectory
 from fastapi.testclient import TestClient
-from sqlalchemy import select
+from sqlalchemy import make_url, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth.password import hash_password
@@ -186,6 +189,33 @@ def outsider_headers(client: TestClient, add_user: Callable[..., None]) -> dict[
     """An account that belongs to no workspace."""
     add_user("outsider@example.com")
     return login_headers(client, "outsider@example.com", USER_PASSWORD)
+
+
+@pytest.fixture
+def history_url() -> Iterator[str]:
+    """A fresh, empty PostgreSQL database for one test, dropped after it.
+
+    - Skips unless VSERVX_TEST_HISTORY_URL names a server this test run may create databases on.
+    - A local one: docker run -d --name vservx-pg -e POSTGRES_PASSWORD=test -p 5432:5432 postgres:17
+      with VSERVX_TEST_HISTORY_URL=postgresql://postgres:test@127.0.0.1:5432/postgres
+    """
+    base = os.environ.get("VSERVX_TEST_HISTORY_URL")
+    if not base:
+        pytest.skip("set VSERVX_TEST_HISTORY_URL to run the PostgreSQL tests")
+    name = f"vservx_test_{secrets.token_hex(4)}"
+
+    async def admin(statement: str) -> None:
+        conn = await asyncpg.connect(base)
+        try:
+            await conn.execute(statement)
+        finally:
+            await conn.close()
+
+    asyncio.run(admin(f'CREATE DATABASE "{name}"'))
+    try:
+        yield make_url(base).set(database=name).render_as_string(hide_password=False)
+    finally:
+        asyncio.run(admin(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)'))
 
 
 @pytest.fixture
